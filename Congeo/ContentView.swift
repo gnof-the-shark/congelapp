@@ -1,133 +1,335 @@
 import SwiftUI
 
-struct ContentView: View {
+// MARK: - Modèles et Gestionnaires de données
+
+enum AppTier: String, CaseIterable, Identifiable {
+    case free = "Gratuite (0 $)"
+    case pro = "Pro (4,99 $)"
+    case family = "Famille (9,99 $)"
+    
+    var id: String { self.rawValue }
+    
+    var maxItems: Int {
+        switch self {
+        case .free: return 20
+        case .pro, .family: return Int.max
+        }
+    }
+    
+    var maxLocations: Int {
+        switch self {
+        case .free: return 1
+        case .pro: return 2
+        case .family: return Int.max
+        }
+    }
+    
+    var hasAILocator: Bool {
+        switch self {
+        case .free: return false
+        case .pro, .family: return true
+        }
+    }
+    
+    var hasAntiWasteRecipeGenerator: Bool {
+        switch self {
+        case .free, .pro: return false
+        case .family: return true
+        }
+    }
+    
+    var hasAds: Bool {
+        switch self {
+        case .free: return true
+        case .pro, .family: return false
+        }
+    }
+}
+
+class LicenseManager: ObservableObject {
+    @Published var currentTier: AppTier = .free
+    
+    func upgrade(to tier: AppTier) {
+        currentTier = tier
+    }
+}
+
+struct FoodItem: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var quantity: Int
+    var location: String
+    var expiryDate: Date
+}
+
+class InventoryManager: ObservableObject {
+    @Published var items: [FoodItem] = [
+        FoodItem(name: "Steaks hachés", quantity: 4, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 5)),
+        FoodItem(name: "Légumes surgelés", quantity: 2, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 30))
+    ]
+    
+    @Published var locations: [String] = ["Maison", "Chalet"]
+    
+    func addItem(name: String, quantity: Int, location: String, expiryDate: Date, license: LicenseManager) -> Bool {
+        if license.currentTier == .free && items.count >= license.currentTier.maxItems {
+            return false
+        }
+        let newItem = FoodItem(name: name, quantity: quantity, location: location, expiryDate: expiryDate)
+        items.append(newItem)
+        return true
+    }
+    
+    func deleteItems(at offsets: IndexSet) {
+        items.remove(atOffsets: offsets)
+    }
+}
+
+// MARK: - Navigation Principale
+
+struct MainTabView: View {
     var body: some View {
         TabView {
             InventoryView()
                 .tabItem {
-                    Label("Inventaire", systemImage: "refrigerator")
+                    Label("Inventaire", systemImage: "snowflake")
                 }
             
             MealGeneratorView()
                 .tabItem {
                     Label("Recettes", systemImage: "fork.knife")
                 }
+            
+            HardwareView()
+                .tabItem {
+                    Label("Caméra ESP32", systemImage: "camera.viewfinder")
+                }
+            
+            SettingsView()
+                .tabItem {
+                    Label("Licence & Réglages", systemImage: "gear")
+                }
         }
     }
 }
 
-// Modèle de données pour les aliments
-struct FoodItem: Identifiable, Codable {
-    let id: UUID
-    var name: String
-    var quantity: Int
-    var expiryDate: String
-    var location: String
+struct ContentView: View {
+    var body: some View {
+        MainTabView()
+    }
 }
 
-// Vue d'inventaire avec sauvegarde locale
+// MARK: - Vues des fonctionnalités
+
 struct InventoryView: View {
-    @AppStorage("saved_items") private var savedItemsData: Data = Data()
-    @State private var items: [FoodItem] = []
-    
-    let freeLimit = 20
-    
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    @State private var showingAddSheet = false
+    @State private var selectedLocation = "Maison"
+
     var body: some View {
         NavigationView {
             VStack {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Mon Inventaire")
-                            .font(.largeTitle)
-                            .bold()
-                        Text("\(items.count) / \(freeLimit) articles (Version Gratuite)")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                if license.currentTier != .free {
+                    Picker("Lieu", selection: $selectedLocation) {
+                        ForEach(inventory.locations, id: \.self) { loc in
+                            Text(loc).tag(loc)
+                        }
                     }
-                    Spacer()
+                    .pickerStyle(SegmentedPickerStyle())
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
                 
                 List {
-                    ForEach(items) { item in
+                    ForEach(inventory.items.filter { license.currentTier == .free || $0.location == selectedLocation }) { item in
                         HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.name)
-                                    .font(.headline)
-                                Text("Lieu : \(item.location)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                            VStack(alignment: .leading) {
+                                Text(item.name).font(.headline)
+                                Text("Lieu : \(item.location)").font(.subheadline).foregroundColor(.secondary)
                             }
                             Spacer()
-                            VStack(alignment: .trailing, spacing: 4) {
-                                Text("Qté : \(item.quantity)")
-                                    .bold()
-                                Text("Exp: \(item.expiryDate)")
-                                    .font(.caption2)
-                                    .foregroundColor(.red)
-                            }
+                            Text("Qté: \(item.quantity)").bold()
                         }
-                        .padding(.vertical, 4)
                     }
-                    .onDelete(perform: deleteItem)
+                    .onDelete(perform: inventory.deleteItems)
                 }
                 
-                Button(action: addItem) {
-                    Label("Ajouter un article", systemImage: "plus.circle.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+                if license.hasAds {
+                    Text("📢 Espace publicitaire (Version Gratuite)")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                        .padding(8)
                 }
-                .padding()
             }
-            .navigationBarHidden(true)
-            .onAppear {
-                loadItems()
+            .navigationTitle("Stock Congélo")
+            .toolbar {
+                Button(action: { showingAddSheet = true }) {
+                    Image(systemName: "plus")
+                }
             }
-        }
-    }
-    
-    func addItem() {
-        if items.count < freeLimit {
-            let newItem = FoodItem(id: UUID(), name: "Nouveau produit", quantity: 1, expiryDate: "30/12/2026", location: "Maison")
-            items.append(newItem)
-            saveItems()
-        }
-    }
-    
-    func deleteItem(at offsets: IndexSet) {
-        items.remove(atOffsets: offsets)
-        saveItems()
-    }
-    
-    // Sauvegarde les articles en arrière-plan
-    func saveItems() {
-        if let encoded = try? JSONEncoder().encode(items) {
-            savedItemsData = encoded
-        }
-    }
-    
-    // Charge les articles sauvegardés au démarrage
-    func loadItems() {
-        if let decoded = try? JSONDecoder().decode([FoodItem].self, from: savedItemsData) {
-            items = decoded
-        } else if items.isEmpty {
-            // Éléments par défaut si la liste est vide au premier lancement
-            items = [
-                FoodItem(id: UUID(), name: "Steaks hachés", quantity: 4, expiryDate: "15/09/2026", location: "Congélateur - Bac 1"),
-                FoodItem(id: UUID(), name: "Pains burger", quantity: 6, expiryDate: "28/08/2026", location: "Congélateur - Bac 2"),
-                FoodItem(id: UUID(), name: "Légumes du jardin", quantity: 2, expiryDate: "10/10/2026", location: "Maison")
-            ]
-            saveItems()
+            .sheet(isPresented: $showingAddSheet) {
+                AddItemView(selectedLocation: selectedLocation)
+            }
         }
     }
 }
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
+struct AddItemView: View {
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    @Environment(\.presentationMode) var presentationMode
+    
+    var selectedLocation: String
+    
+    @State private var name = ""
+    @State private var quantity = 1
+    @State private var expiryDate = Date()
+    @State private var showAlertLimit = false
+
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Nom de l'article", text: $name)
+                Stepper("Quantité : \(quantity)", value: $quantity, in: 1...50)
+                DatePicker("Expiration", selection: $expiryDate, displayedComponents: .date)
+            }
+            .navigationTitle("Ajouter un article")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Enregistrer") {
+                        let success = inventory.addItem(name: name, quantity: quantity, location: selectedLocation, expiryDate: expiryDate, license: license)
+                        if success {
+                            presentationMode.wrappedValue.dismiss()
+                        } else {
+                            showAlertLimit = true
+                        }
+                    }
+                }
+            }
+            .alert(isPresented: $showAlertLimit) {
+                Alert(title: Text("Limite atteinte"), message: Text("Passez à la version Pro ou Famille pour débloquer un inventaire illimité !"), dismissButton: .default(Text("OK")))
+            }
+        }
+    }
+}
+
+struct MealGeneratorView: View {
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    @State private var generatedRecipe = "Appuyez sur générer pour concocter un repas avec les stocks proches de péremption."
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                if license.hasAntiWasteRecipeGenerator {
+                    Text("🍳 Générateur Intelligent Anti-Gaspi")
+                        .font(.title2)
+                        .bold()
+                        .padding()
+                    
+                    Text(generatedRecipe)
+                        .padding()
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                    
+                    Button("Générer une recette") {
+                        let itemsList = inventory.items.map { $0.name }.joined(separator: ", ")
+                        if itemsList.isEmpty {
+                            generatedRecipe = "Votre inventaire est vide !"
+                        } else {
+                            generatedRecipe = "Recette suggérée basée sur : \n\(itemsList)\n\n-> Poêlée rapide anti-gaspi assaisonnée aux herbes !"
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.orange)
+                        Text("Fonction réservée à la Version Famille")
+                            .font(.headline)
+                        Text("Passez à la licence Famille (9,99 $) pour débloquer le générateur de repas anti-gaspi complet.")
+                            .multilineTextAlignment(.center)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal)
+                    }
+                    .padding()
+                }
+                Spacer()
+            }
+            .navigationTitle("Recettes Anti-Gaspi")
+        }
+    }
+}
+
+struct HardwareView: View {
+    @State private var isConnected = false
+    @State private var streamURL = "http://192.168.1.50/stream"
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Station ESP32-CAM (Matériel Optionnel)")) {
+                    TextField("Adresse IP du module", text: $streamURL)
+                    Toggle("Activer le flux vidéo", isOn: $isConnected)
+                }
+                
+                Section(header: Text("Aperçu de la caméra (Fisheye)")) {
+                    if isConnected {
+                        Rectangle()
+                            .fill(Color.black)
+                            .frame(height: 220)
+                            .overlay(
+                                Text("🔴 Flux direct ESP32-CAM actif\n(Porte du congélateur)")
+                                    .foregroundColor(.white)
+                                    .multilineTextAlignment(.center)
+                            )
+                            .cornerRadius(8)
+                    } else {
+                        Text("Module déconnecté ou en veille.")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Section(header: Text("Informations du Kit")) {
+                    Text("Coût de revient estimé : 15,00 $")
+                    Text("Prix public conseillé : 25,00 $ (Marge fixe : 10 $)")
+                }
+            }
+            .navigationTitle("Boîtier Matériel")
+        }
+    }
+}
+
+struct SettingsView: View {
+    @EnvironmentObject var license: LicenseManager
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Licence Actuelle")) {
+                    Text("Formule : \(license.currentTier.rawValue)")
+                        .bold()
+                }
+                
+                Section(header: Text("Modifier la Licence (Achat Unique)")) {
+                    Button("Passer à la Version Gratuite (0 $)") {
+                        license.upgrade(to: .free)
+                    }
+                    Button("Acheter la Version Pro (4,99 $)") {
+                        license.upgrade(to: .pro)
+                    }
+                    Button("Acheter la Version Famille (9,99 $)") {
+                        license.upgrade(to: .family)
+                    }
+                }
+                
+                Section(header: Text("À propos")) {
+                    Text("Congelo - Écosystème de gestion domestique intelligent.")
+                    Text("Compatible iOS 16 et supérieur.")
+                }
+            }
+            .navigationTitle("Réglages & Licences")
+        }
     }
 }
