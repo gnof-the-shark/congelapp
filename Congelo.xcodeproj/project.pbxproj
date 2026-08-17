@@ -1,0 +1,592 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		D984A3FA30337A5600414A9E /* CongeoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D984A3F930337A5600414A9E /* CongeoApp.swift */; };
+		D984A3FC30337A5600414A9E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D984A3FB30337A5600414A9E /* ContentView.swift */; };
+		D984A3FE30337A5B00414A9E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D984A3FD30337A5B00414A9E /* Assets.xcassets */; };
+		D984A40130337A5B00414A9E /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D984A40030337A5B00414A9E /* Preview Assets.xcassets */; };
+		D984A40B30337A5B00414A9E /* CongeoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D984A40A30337A5B00414A9E /* CongeoTests.swift */; };
+		D984A41530337A5B00414A9E /* CongeoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D984A41430337A5B00414A9E /* CongeoUITests.swift */; };
+		D984A41730337A5B00414A9E /* CongeoUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D984A41630337A5B00414A9E /* CongeoUITestsLaunchTests.swift */; };
+		D984A42430337DBC00414A9E /* MealGeneratorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D984A42330337DBC00414A9E /* MealGeneratorView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D984A40730337A5B00414A9E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D984A3EE30337A5600414A9E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D984A3F530337A5600414A9E;
+			remoteInfo = Congeo;
+		};
+		D984A41130337A5B00414A9E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D984A3EE30337A5600414A9E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D984A3F530337A5600414A9E;
+			remoteInfo = Congeo;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		D984A3F630337A5600414A9E /* Congelo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Congelo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D984A3F930337A5600414A9E /* CongeoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongeoApp.swift; sourceTree = "<group>"; };
+		D984A3FB30337A5600414A9E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D984A3FD30337A5B00414A9E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D984A40030337A5B00414A9E /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		D984A40630337A5B00414A9E /* CongeloTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CongeloTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D984A40A30337A5B00414A9E /* CongeoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongeoTests.swift; sourceTree = "<group>"; };
+		D984A41030337A5B00414A9E /* CongeloUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CongeloUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D984A41430337A5B00414A9E /* CongeoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongeoUITests.swift; sourceTree = "<group>"; };
+		D984A41630337A5B00414A9E /* CongeoUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongeoUITestsLaunchTests.swift; sourceTree = "<group>"; };
+		D984A42330337DBC00414A9E /* MealGeneratorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealGeneratorView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D984A3F330337A5600414A9E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984A40330337A5B00414A9E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984A40D30337A5B00414A9E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		D984A3ED30337A5600414A9E = {
+			isa = PBXGroup;
+			children = (
+				D984A42330337DBC00414A9E /* MealGeneratorView.swift */,
+				D984A3F830337A5600414A9E /* Congeo */,
+				D984A40930337A5B00414A9E /* CongeoTests */,
+				D984A41330337A5B00414A9E /* CongeoUITests */,
+				D984A3F730337A5600414A9E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D984A3F730337A5600414A9E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D984A3F630337A5600414A9E /* Congelo.app */,
+				D984A40630337A5B00414A9E /* CongeloTests.xctest */,
+				D984A41030337A5B00414A9E /* CongeloUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D984A3F830337A5600414A9E /* Congeo */ = {
+			isa = PBXGroup;
+			children = (
+				D984A3F930337A5600414A9E /* CongeoApp.swift */,
+				D984A3FB30337A5600414A9E /* ContentView.swift */,
+				D984A3FD30337A5B00414A9E /* Assets.xcassets */,
+				D984A3FF30337A5B00414A9E /* Preview Content */,
+			);
+			path = Congeo;
+			sourceTree = "<group>";
+		};
+		D984A3FF30337A5B00414A9E /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				D984A40030337A5B00414A9E /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		D984A40930337A5B00414A9E /* CongeoTests */ = {
+			isa = PBXGroup;
+			children = (
+				D984A40A30337A5B00414A9E /* CongeoTests.swift */,
+			);
+			path = CongeoTests;
+			sourceTree = "<group>";
+		};
+		D984A41330337A5B00414A9E /* CongeoUITests */ = {
+			isa = PBXGroup;
+			children = (
+				D984A41430337A5B00414A9E /* CongeoUITests.swift */,
+				D984A41630337A5B00414A9E /* CongeoUITestsLaunchTests.swift */,
+			);
+			path = CongeoUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D984A3F530337A5600414A9E /* Congelo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D984A41A30337A5B00414A9E /* Build configuration list for PBXNativeTarget "Congelo" */;
+			buildPhases = (
+				D984A3F230337A5600414A9E /* Sources */,
+				D984A3F330337A5600414A9E /* Frameworks */,
+				D984A3F430337A5600414A9E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Congelo;
+			productName = Congeo;
+			productReference = D984A3F630337A5600414A9E /* Congelo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D984A40530337A5B00414A9E /* CongeloTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D984A41D30337A5B00414A9E /* Build configuration list for PBXNativeTarget "CongeloTests" */;
+			buildPhases = (
+				D984A40230337A5B00414A9E /* Sources */,
+				D984A40330337A5B00414A9E /* Frameworks */,
+				D984A40430337A5B00414A9E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D984A40830337A5B00414A9E /* PBXTargetDependency */,
+			);
+			name = CongeloTests;
+			productName = CongeoTests;
+			productReference = D984A40630337A5B00414A9E /* CongeloTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D984A40F30337A5B00414A9E /* CongeloUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D984A42030337A5B00414A9E /* Build configuration list for PBXNativeTarget "CongeloUITests" */;
+			buildPhases = (
+				D984A40C30337A5B00414A9E /* Sources */,
+				D984A40D30337A5B00414A9E /* Frameworks */,
+				D984A40E30337A5B00414A9E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D984A41230337A5B00414A9E /* PBXTargetDependency */,
+			);
+			name = CongeloUITests;
+			productName = CongeoUITests;
+			productReference = D984A41030337A5B00414A9E /* CongeloUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D984A3EE30337A5600414A9E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1420;
+				LastUpgradeCheck = 1420;
+				TargetAttributes = {
+					D984A3F530337A5600414A9E = {
+						CreatedOnToolsVersion = 14.2;
+					};
+					D984A40530337A5B00414A9E = {
+						CreatedOnToolsVersion = 14.2;
+						TestTargetID = D984A3F530337A5600414A9E;
+					};
+					D984A40F30337A5B00414A9E = {
+						CreatedOnToolsVersion = 14.2;
+						TestTargetID = D984A3F530337A5600414A9E;
+					};
+				};
+			};
+			buildConfigurationList = D984A3F130337A5600414A9E /* Build configuration list for PBXProject "Congelo" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = D984A3ED30337A5600414A9E;
+			productRefGroup = D984A3F730337A5600414A9E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D984A3F530337A5600414A9E /* Congelo */,
+				D984A40530337A5B00414A9E /* CongeloTests */,
+				D984A40F30337A5B00414A9E /* CongeloUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D984A3F430337A5600414A9E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D984A40130337A5B00414A9E /* Preview Assets.xcassets in Resources */,
+				D984A3FE30337A5B00414A9E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984A40430337A5B00414A9E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984A40E30337A5B00414A9E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D984A3F230337A5600414A9E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D984A3FC30337A5600414A9E /* ContentView.swift in Sources */,
+				D984A3FA30337A5600414A9E /* CongeoApp.swift in Sources */,
+				D984A42430337DBC00414A9E /* MealGeneratorView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984A40230337A5B00414A9E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D984A40B30337A5B00414A9E /* CongeoTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984A40C30337A5B00414A9E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D984A41530337A5B00414A9E /* CongeoUITests.swift in Sources */,
+				D984A41730337A5B00414A9E /* CongeoUITestsLaunchTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D984A40830337A5B00414A9E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D984A3F530337A5600414A9E /* Congelo */;
+			targetProxy = D984A40730337A5B00414A9E /* PBXContainerItemProxy */;
+		};
+		D984A41230337A5B00414A9E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D984A3F530337A5600414A9E /* Congelo */;
+			targetProxy = D984A41130337A5B00414A9E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		D984A41830337A5B00414A9E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		D984A41930337A5B00414A9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		D984A41B30337A5B00414A9E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Congeo/Preview Content\"";
+				DEVELOPMENT_TEAM = 88VD3QJX9N;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.christophewhite.congelo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D984A41C30337A5B00414A9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Congeo/Preview Content\"";
+				DEVELOPMENT_TEAM = 88VD3QJX9N;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.christophewhite.congelo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		D984A41E30337A5B00414A9E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.christophewhite.CongeoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Congelo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Congelo";
+			};
+			name = Debug;
+		};
+		D984A41F30337A5B00414A9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.christophewhite.CongeoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Congelo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Congelo";
+			};
+			name = Release;
+		};
+		D984A42130337A5B00414A9E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.christophewhite.CongeoUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Congeo;
+			};
+			name = Debug;
+		};
+		D984A42230337A5B00414A9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.christophewhite.CongeoUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Congeo;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		D984A3F130337A5600414A9E /* Build configuration list for PBXProject "Congelo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D984A41830337A5B00414A9E /* Debug */,
+				D984A41930337A5B00414A9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D984A41A30337A5B00414A9E /* Build configuration list for PBXNativeTarget "Congelo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D984A41B30337A5B00414A9E /* Debug */,
+				D984A41C30337A5B00414A9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D984A41D30337A5B00414A9E /* Build configuration list for PBXNativeTarget "CongeloTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D984A41E30337A5B00414A9E /* Debug */,
+				D984A41F30337A5B00414A9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D984A42030337A5B00414A9E /* Build configuration list for PBXNativeTarget "CongeloUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D984A42130337A5B00414A9E /* Debug */,
+				D984A42230337A5B00414A9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = D984A3EE30337A5600414A9E /* Project object */;
+}
