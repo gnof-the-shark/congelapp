@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import UIKit
 
 // MARK: - Modèles et Gestionnaires de données
