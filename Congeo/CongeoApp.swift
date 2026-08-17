@@ -1,17 +1,15 @@
-//
-//  CongeoApp.swift
-//  Congeo
-//
-//  Created by Christophe White on 2026-08-17.
-//
-
 import SwiftUI
 
 @main
-struct CongeoApp: App {
+struct CongeloApp: App {
+    @StateObject private var licenseManager = LicenseManager()
+    @StateObject private var inventoryManager = InventoryManager()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
+                .environmentObject(licenseManager)
+                .environmentObject(inventoryManager)
         }
     }
 }
