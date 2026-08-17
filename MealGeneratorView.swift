@@ -8,7 +8,7 @@ struct MealGeneratorView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                if license.hasAntiWasteRecipeGenerator {
+                if license.currentTier.hasAntiWasteRecipeGenerator {
                     Text("🍳 Générateur Intelligent Anti-Gaspi")
                         .font(.title2)
                         .bold()
