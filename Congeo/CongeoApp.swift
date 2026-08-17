@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CongeloApp: App {
+struct CongeoApp: App {
     @StateObject private var licenseManager = LicenseManager()
     @StateObject private var inventoryManager = InventoryManager()
 
