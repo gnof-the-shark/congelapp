@@ -153,7 +153,7 @@ struct InventoryView: View {
                     .onDelete(perform: inventory.deleteItems)
                 }
                 
-                if license.hasAds {
+                if license.currentTier.hasAds {
                     Text("📢 Espace publicitaire (Version Gratuite)")
                         .font(.footnote)
                         .foregroundColor(.gray)
