@@ -1,10 +1,14 @@
 import SwiftUI
 import Foundation
 import UIKit
+import AVFoundation
+import Vision
+import AudioToolbox
+import Combine
 
 // MARK: - Modèles et Gestionnaires de données
 
-enum AppTier: String, CaseIterable, Identifiable {
+enum AppTier: String, CaseIterable, Identifiable, Codable {
     case free = "Gratuite (0 $)"
     case pro = "Pro (4,99 $)"
     case family = "Famille (9,99 $)"
@@ -61,18 +65,27 @@ enum AppTier: String, CaseIterable, Identifiable {
 }
 
 class LicenseManager: ObservableObject {
+    private let tierKey = "congelo_app_tier"
+    private let storageKey = "registeredDeviceIDs"
+    
     @Published var currentTier: AppTier = .free {
         didSet {
+            UserDefaults.standard.set(currentTier.rawValue, forKey: tierKey)
             registerCurrentDeviceIfNeeded()
         }
     }
     @Published private(set) var registeredDeviceIDs: [String] = []
     @Published var deviceRegistrationError: String?
     
-    private let storageKey = "registeredDeviceIDs"
-    
     init() {
-        registeredDeviceIDs = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
+        if let savedTierRaw = UserDefaults.standard.string(forKey: tierKey),
+           let savedTier = AppTier(rawValue: savedTierRaw) {
+            self.currentTier = savedTier
+        } else {
+            self.currentTier = .free
+        }
+        
+        self.registeredDeviceIDs = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
         registerCurrentDeviceIfNeeded()
     }
     
@@ -81,7 +94,7 @@ class LicenseManager: ObservableObject {
     }
     
     func registerCurrentDeviceIfNeeded() {
-        guard let deviceID = UIDevice.current.identifierForVendor?.uuidString else { return }
+        let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? "device-default-id"
         if registeredDeviceIDs.contains(deviceID) {
             deviceRegistrationError = nil
             return
@@ -94,23 +107,173 @@ class LicenseManager: ObservableObject {
         UserDefaults.standard.set(registeredDeviceIDs, forKey: storageKey)
         deviceRegistrationError = nil
     }
+    
+    func resetRegisteredDevices() {
+        registeredDeviceIDs = []
+        UserDefaults.standard.removeObject(forKey: storageKey)
+        registerCurrentDeviceIfNeeded()
+    }
 }
 
-struct FoodItem: Identifiable, Codable {
-    var id = UUID()
+enum FoodCategory: String, CaseIterable, Identifiable, Codable {
+    case meat = "Viandes & Volailles"
+    case fish = "Poissons & Fruits de mer"
+    case vegetables = "Légumes & Herbes"
+    case fruits = "Fruits"
+    case readyMeals = "Plats cuisinés & Pizzas"
+    case bakery = "Pains & Pâtes"
+    case dairy = "Produits Laitiers & Glaces"
+    case other = "Autre"
+    
+    var id: String { self.rawValue }
+    
+    var icon: String {
+        switch self {
+        case .meat: return "flame.fill"
+        case .fish: return "fish.fill"
+        case .vegetables: return "leaf.fill"
+        case .fruits: return "carrot.fill"
+        case .readyMeals: return "takeoutbag.and.cup.and.straw.fill"
+        case .bakery: return "birthday.cake.fill"
+        case .dairy: return "cup.and.saucer.fill"
+        case .other: return "cube.box.fill"
+        }
+    }
+    
+    static func detect(from text: String) -> FoodCategory {
+        let lower = text.lowercased()
+        if lower.contains("steak") || lower.contains("boeuf") || lower.contains("poulet") || lower.contains("porc") || lower.contains("viande") || lower.contains("haché") || lower.contains("dinde") || lower.contains("saucisse") || lower.contains("jambon") {
+            return .meat
+        }
+        if lower.contains("poisson") || lower.contains("saumon") || lower.contains("cabillaud") || lower.contains("crevette") || lower.contains("thon") || lower.contains("colin") || lower.contains("moule") {
+            return .fish
+        }
+        if lower.contains("légume") || lower.contains("haricot") || lower.contains("épinard") || lower.contains("brocoli") || lower.contains("carotte") || lower.contains("pois") || lower.contains("courgette") || lower.contains("poireau") || lower.contains("champignon") {
+            return .vegetables
+        }
+        if lower.contains("fruit") || lower.contains("fraise") || lower.contains("framboise") || lower.contains("mangue") || lower.contains("myrtille") || lower.contains("pomme") || lower.contains("banane") {
+            return .fruits
+        }
+        if lower.contains("pizza") || lower.contains("lasagne") || lower.contains("plat") || lower.contains("gratin") || lower.contains("quiche") || lower.contains("tarte") || lower.contains("nugget") || lower.contains("frites") {
+            return .readyMeals
+        }
+        if lower.contains("pain") || lower.contains("baguette") || lower.contains("brioche") || lower.contains("croissant") || lower.contains("pâte") {
+            return .bakery
+        }
+        if lower.contains("glace") || lower.contains("crème") || lower.contains("fromage") || lower.contains("sorbet") || lower.contains("beurre") {
+            return .dairy
+        }
+        return .other
+    }
+}
+
+enum ExpiryUrgency {
+    case expired
+    case critical // 0 à 3 jours
+    case warning // 4 à 14 jours
+    case good // > 14 jours
+    
+    var color: Color {
+        switch self {
+        case .expired: return .red
+        case .critical: return .orange
+        case .warning: return .yellow
+        case .good: return .green
+        }
+    }
+    
+    var label: String {
+        switch self {
+        case .expired: return "Périmé"
+        case .critical: return "Urgent (< 3j)"
+        case .warning: return "À consommer (< 14j)"
+        case .good: return "Frais"
+        }
+    }
+}
+
+struct FoodItem: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
     var name: String
     var quantity: Int
     var location: String
     var expiryDate: Date
+    var addedDate: Date = Date()
+    var barcode: String?
+    var brand: String?
+    var category: FoodCategory = .other
+    var notes: String?
+    var imageURL: String?
+    
+    var daysUntilExpiry: Int {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        let startOfExpiry = calendar.startOfDay(for: expiryDate)
+        let components = calendar.dateComponents([.day], from: startOfToday, to: startOfExpiry)
+        return components.day ?? 0
+    }
+    
+    var urgency: ExpiryUrgency {
+        let days = daysUntilExpiry
+        if days < 0 { return .expired }
+        if days <= 3 { return .critical }
+        if days <= 14 { return .warning }
+        return .good
+    }
 }
 
 class InventoryManager: ObservableObject {
-    @Published var items: [FoodItem] = [
-        FoodItem(name: "Steaks hachés", quantity: 4, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 5)),
-        FoodItem(name: "Légumes surgelés", quantity: 2, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 30))
-    ]
+    private let itemsKey = "congelo_inventory_items_v2"
+    private let locationsKey = "congelo_inventory_locations_v2"
     
-    @Published var locations: [String] = ["Maison"]
+    @Published var items: [FoodItem] = [] {
+        didSet {
+            saveItems()
+        }
+    }
+    
+    @Published var locations: [String] = ["Maison", "Chalet"] {
+        didSet {
+            saveLocations()
+        }
+    }
+    
+    init() {
+        loadLocations()
+        loadItems()
+    }
+    
+    private func saveItems() {
+        if let encoded = try? JSONEncoder().encode(items) {
+            UserDefaults.standard.set(encoded, forKey: itemsKey)
+        }
+    }
+    
+    private func loadItems() {
+        if let data = UserDefaults.standard.data(forKey: itemsKey),
+           let decoded = try? JSONDecoder().decode([FoodItem].self, from: data) {
+            self.items = decoded
+        } else {
+            self.items = [
+                FoodItem(name: "Steaks hachés pur bœuf", quantity: 4, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 4), brand: "Charal", category: .meat),
+                FoodItem(name: "Légumes pour poêlée", quantity: 2, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 25), brand: "Bonduelle", category: .vegetables),
+                FoodItem(name: "Filets de saumon Atlantique", quantity: 3, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 2), brand: "Capitaine Cook", category: .fish),
+                FoodItem(name: "Pain de mie complet", quantity: 1, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 45), brand: "Jacquet", category: .bakery)
+            ]
+        }
+    }
+    
+    private func saveLocations() {
+        UserDefaults.standard.set(locations, forKey: locationsKey)
+    }
+    
+    private func loadLocations() {
+        if let saved = UserDefaults.standard.stringArray(forKey: locationsKey), !saved.isEmpty {
+            self.locations = saved
+        } else {
+            self.locations = ["Maison", "Chalet"]
+        }
+    }
     
     func visibleLocations(for tier: AppTier) -> [String] {
         if tier.maxLocations == Int.max { return locations }
@@ -125,83 +288,264 @@ class InventoryManager: ObservableObject {
         return true
     }
     
-    func addItem(name: String, quantity: Int, location: String, expiryDate: Date, license: LicenseManager) -> Bool {
+    func removeLocation(at offsets: IndexSet) {
+        locations.remove(atOffsets: offsets)
+        if locations.isEmpty {
+            locations = ["Maison"]
+        }
+    }
+    
+    func addItem(
+        name: String,
+        quantity: Int,
+        location: String,
+        expiryDate: Date,
+        barcode: String? = nil,
+        brand: String? = nil,
+        category: FoodCategory? = nil,
+        notes: String? = nil,
+        imageURL: String? = nil,
+        license: LicenseManager
+    ) -> Bool {
         let allowedLocations = visibleLocations(for: license.currentTier)
         guard allowedLocations.contains(location) else { return false }
         guard items.count < license.currentTier.maxItems else { return false }
         
-        let newItem = FoodItem(name: name, quantity: quantity, location: location, expiryDate: expiryDate)
-        items.append(newItem)
+        let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedName.isEmpty else { return false }
+        
+        let determinedCategory = category ?? FoodCategory.detect(from: cleanedName)
+        
+        let newItem = FoodItem(
+            name: cleanedName,
+            quantity: max(1, quantity),
+            location: location,
+            expiryDate: expiryDate,
+            addedDate: Date(),
+            barcode: barcode,
+            brand: brand,
+            category: determinedCategory,
+            notes: notes,
+            imageURL: imageURL
+        )
+        items.insert(newItem, at: 0)
         return true
+    }
+    
+    func updateItem(_ item: FoodItem) {
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            items[index] = item
+        }
+    }
+    
+    func consumeItem(withId id: UUID, count: Int = 1) {
+        if let index = items.firstIndex(where: { $0.id == id }) {
+            if items[index].quantity > count {
+                items[index].quantity -= count
+            } else {
+                items.remove(at: index)
+            }
+        }
     }
     
     func deleteItems(at offsets: IndexSet) {
         items.remove(atOffsets: offsets)
     }
+    
+    func deleteItem(withId id: UUID) {
+        items.removeAll(where: { $0.id == id })
+    }
+    
+    func exportJSON() -> String? {
+        guard let data = try? JSONEncoder().encode(items),
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return string
+    }
+    
+    func importJSON(_ jsonString: String, license: LicenseManager) -> (imported: Int, skipped: Int) {
+        guard let data = jsonString.data(using: .utf8),
+              let importedItems = try? JSONDecoder().decode([FoodItem].self, from: data) else {
+            return (0, 0)
+        }
+        var count = 0
+        var skipped = 0
+        for item in importedItems {
+            if items.count < license.currentTier.maxItems {
+                var validated = item
+                validated.id = UUID()
+                if !locations.contains(validated.location) {
+                    validated.location = locations.first ?? "Maison"
+                }
+                items.append(validated)
+                count += 1
+            } else {
+                skipped += 1
+            }
+        }
+        return (count, skipped)
+    }
 }
 
-struct ScannedProduct: Identifiable {
-    let id = UUID()
+// MARK: - OpenFoodFacts API Service Réel
+
+struct ScannedProduct: Identifiable, Codable, Equatable {
+    var id = UUID()
     let barcode: String
     let name: String
     let brand: String
+    var quantityText: String?
+    var category: FoodCategory = .other
+    var imageURL: String?
+    var nutriscore: String?
 }
 
 struct OpenFoodFactsResponse: Decodable {
+    let status: Int?
     let product: OpenFoodFactsProduct?
 }
 
 struct OpenFoodFactsProduct: Decodable {
     let productName: String?
+    let productNameFr: String?
+    let genericNameFr: String?
     let brands: String?
+    let quantity: String?
+    let imageFrontUrl: String?
+    let imageSmallUrl: String?
+    let nutriscoreGrade: String?
+    let categories: String?
     
     enum CodingKeys: String, CodingKey {
         case productName = "product_name"
+        case productNameFr = "product_name_fr"
+        case genericNameFr = "generic_name_fr"
         case brands
+        case quantity
+        case imageFrontUrl = "image_front_url"
+        case imageSmallUrl = "image_small_url"
+        case nutriscoreGrade = "nutriscore_grade"
+        case categories
+    }
+    
+    var resolvedName: String? {
+        if let fr = productNameFr, !fr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return fr.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let general = productName, !general.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return general.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let generic = genericNameFr, !generic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return generic.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 }
 
 actor OpenFoodFactsService {
     func fetchProduct(for barcode: String) async -> ScannedProduct? {
-        guard let url = URL(string: "https://world.openfoodfacts.org/api/v2/product/\(barcode).json") else { return nil }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let decoded = try JSONDecoder().decode(OpenFoodFactsResponse.self, from: data)
-            guard let product = decoded.product else { return nil }
-            let name = product.productName?.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let validName = name, !validName.isEmpty else { return nil }
-            return ScannedProduct(barcode: barcode, name: validName, brand: product.brands ?? "Marque inconnue")
-        } catch {
-            return nil
+        let cleanBarcode = barcode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanBarcode.isEmpty else { return nil }
+        
+        let urlStrings = [
+            "https://world.openfoodfacts.org/api/v2/product/\(cleanBarcode).json",
+            "https://world.openfoodfacts.org/api/v0/product/\(cleanBarcode).json"
+        ]
+        
+        for urlString in urlStrings {
+            guard let url = URL(string: urlString) else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            request.setValue("CongeloApp - iOS - Version 1.0 - www.congelo.app", forHTTPHeaderField: "User-Agent")
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                    continue
+                }
+                
+                let decoded = try JSONDecoder().decode(OpenFoodFactsResponse.self, from: data)
+                if let product = decoded.product, let name = product.resolvedName {
+                    let brand = product.brands?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Marque inconnue"
+                    let cat = FoodCategory.detect(from: "\(name) \(product.categories ?? "")")
+                    let img = product.imageFrontUrl ?? product.imageSmallUrl
+                    return ScannedProduct(
+                        barcode: cleanBarcode,
+                        name: name,
+                        brand: brand.isEmpty ? "Marque inconnue" : brand,
+                        quantityText: product.quantity,
+                        category: cat,
+                        imageURL: img,
+                        nutriscore: product.nutriscoreGrade?.uppercased()
+                    )
+                }
+            } catch {
+                continue
+            }
         }
+        return nil
     }
 }
 
+// MARK: - iCloud & Partage Familial Réel
+
 final class FamilySharingManager: ObservableObject {
     @Published var members: [String] = []
-    private let key = "familyMembers"
+    @Published var lastSyncDate: Date?
+    private let key = "congelo_family_members"
     
     init() {
-        members = NSUbiquitousKeyValueStore.default.array(forKey: key) as? [String] ?? []
+        loadMembers()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(ubiquitousStoreDidChange),
+            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: NSUbiquitousKeyValueStore.default
+        )
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    @objc private func ubiquitousStoreDidChange(notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.loadMembers()
+        }
+    }
+    
+    private func loadMembers() {
+        if let cloudMembers = NSUbiquitousKeyValueStore.default.array(forKey: key) as? [String] {
+            self.members = cloudMembers
+            self.lastSyncDate = Date()
+        } else if let localMembers = UserDefaults.standard.stringArray(forKey: key) {
+            self.members = localMembers
+        }
     }
     
     func addMember(email: String) -> Bool {
-        let cleaned = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.contains("@"), !members.contains(cleaned) else { return false }
+        let cleaned = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard cleaned.contains("@") && cleaned.contains("."), !members.contains(cleaned) else { return false }
         members.append(cleaned)
-        NSUbiquitousKeyValueStore.default.set(members, forKey: key)
-        NSUbiquitousKeyValueStore.default.synchronize()
+        save()
         return true
     }
     
     func removeMember(at offsets: IndexSet) {
         members.remove(atOffsets: offsets)
+        save()
+    }
+    
+    private func save() {
         NSUbiquitousKeyValueStore.default.set(members, forKey: key)
         NSUbiquitousKeyValueStore.default.synchronize()
+        UserDefaults.standard.set(members, forKey: key)
+        lastSyncDate = Date()
     }
 }
 
-// MARK: - Navigation Principale
+// MARK: - Vue Principale & Tab Navigation
 
 struct MainTabView: View {
     @EnvironmentObject var license: LicenseManager
@@ -220,7 +564,7 @@ struct MainTabView: View {
             
             ObjectFinderView()
                 .tabItem {
-                    Label("Trouveur", systemImage: "viewfinder")
+                    Label("Trouveur IA", systemImage: "viewfinder")
                 }
             
             MealGeneratorView()
@@ -238,6 +582,7 @@ struct MainTabView: View {
                     Label("Licence & Réglages", systemImage: "gear")
                 }
         }
+        .accentColor(.cyan)
         .onAppear {
             license.registerCurrentDeviceIfNeeded()
         }
@@ -250,29 +595,60 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Vues des fonctionnalités
+// MARK: - 1. Vue Inventaire Complète
 
 struct InventoryView: View {
     @EnvironmentObject var inventory: InventoryManager
     @EnvironmentObject var license: LicenseManager
+    
     @State private var showingAddSheet = false
     @State private var showingAddLocationSheet = false
     @State private var selectedLocation = "Maison"
+    @State private var selectedCategory: FoodCategory? = nil
+    @State private var searchText = ""
+    @State private var itemToEdit: FoodItem? = nil
     
     private var availableLocations: [String] {
         inventory.visibleLocations(for: license.currentTier)
     }
     
     private var filteredItems: [FoodItem] {
-        if license.currentTier == .free {
-            return inventory.items.filter { $0.location == availableLocations.first ?? "Maison" }
+        inventory.items.filter { item in
+            let matchLocation: Bool
+            if license.currentTier == .free {
+                matchLocation = item.location == (availableLocations.first ?? "Maison")
+            } else {
+                matchLocation = item.location == selectedLocation
+            }
+            let matchCategory = selectedCategory == nil || item.category == selectedCategory
+            let matchSearch = searchText.isEmpty || item.name.localizedCaseInsensitiveContains(searchText) || (item.brand?.localizedCaseInsensitiveContains(searchText) ?? false)
+            return matchLocation && matchCategory && matchSearch
         }
-        return inventory.items.filter { $0.location == selectedLocation }
+    }
+    
+    private var expiringSoonCount: Int {
+        inventory.items.filter { $0.daysUntilExpiry <= 7 }.count
     }
     
     var body: some View {
         NavigationView {
-            VStack {
+            VStack(spacing: 0) {
+                // Bannière alerte péremption
+                if expiringSoonCount > 0 {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("\(expiringSoonCount) article(s) à consommer rapidement !")
+                            .font(.caption)
+                            .bold()
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.15))
+                }
+                
+                // Sélecteur de lieu
                 if availableLocations.count > 1 {
                     Picker("Lieu", selection: $selectedLocation) {
                         ForEach(availableLocations, id: \.self) { loc in
@@ -281,41 +657,114 @@ struct InventoryView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
+                    .padding(.top, 8)
                 }
                 
-                List {
-                    ForEach(filteredItems) { item in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(item.name).font(.headline)
-                                Text("Lieu : \(item.location)").font(.subheadline).foregroundColor(.secondary)
+                // Filtre de catégories
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Button {
+                            selectedCategory = nil
+                        } label: {
+                            Text("Tous (\(inventory.items.filter { $0.location == selectedLocation }.count))")
+                                .font(.caption)
+                                .bold()
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(selectedCategory == nil ? Color.cyan : Color.secondary.opacity(0.15))
+                                .foregroundColor(selectedCategory == nil ? .white : .primary)
+                                .cornerRadius(16)
+                        }
+                        
+                        ForEach(FoodCategory.allCases) { cat in
+                            Button {
+                                selectedCategory = (selectedCategory == cat) ? nil : cat
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: cat.icon)
+                                    Text(cat.rawValue)
+                                }
+                                .font(.caption)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(selectedCategory == cat ? Color.cyan : Color.secondary.opacity(0.15))
+                                .foregroundColor(selectedCategory == cat ? .white : .primary)
+                                .cornerRadius(16)
                             }
-                            Spacer()
-                            Text("Qté: \(item.quantity)").bold()
                         }
                     }
-                    .onDelete(perform: inventory.deleteItems)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
                 }
                 
+                // Liste des articles
+                if filteredItems.isEmpty {
+                    VStack(spacing: 12) {
+                        Spacer()
+                        Image(systemName: "snowflake")
+                            .font(.system(size: 48))
+                            .foregroundColor(.cyan.opacity(0.6))
+                        Text("Aucun article trouvé")
+                            .font(.headline)
+                        Text("Ajoutez vos articles ou utilisez le scanner pour remplir votre stock.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                        Button {
+                            showingAddSheet = true
+                        } label: {
+                            Label("Ajouter un article", systemImage: "plus")
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 8)
+                        Spacer()
+                    }
+                } else {
+                    List {
+                        ForEach(filteredItems) { item in
+                            FoodItemRow(item: item, onConsume: {
+                                inventory.consumeItem(withId: item.id)
+                            }, onEdit: {
+                                itemToEdit = item
+                            })
+                        }
+                        .onDelete(perform: inventory.deleteItems)
+                    }
+                    .listStyle(.insetGrouped)
+                }
+                
+                // Espace version gratuite
                 if license.currentTier.hasAds {
-                    Text("📢 Espace publicitaire (Version Gratuite)")
-                        .font(.footnote)
-                        .foregroundColor(.gray)
-                        .padding(8)
+                    HStack {
+                        Image(systemName: "megaphone.fill")
+                            .foregroundColor(.secondary)
+                        Text("Version Gratuite : max \(license.currentTier.maxItems) articles • Passez en Pro pour illimité")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.secondary.opacity(0.08))
                 }
             }
+            .searchable(text: $searchText, prompt: "Rechercher un produit, marque...")
             .onAppear {
-                if let first = availableLocations.first {
+                if let first = availableLocations.first, !availableLocations.contains(selectedLocation) {
                     selectedLocation = first
                 }
             }
             .navigationTitle("Stock Congélo")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAddLocationSheet = true
-                    } label: {
-                        Image(systemName: "building.2.crop.circle")
+                    if license.currentTier.maxLocations > 1 {
+                        Button {
+                            showingAddLocationSheet = true
+                        } label: {
+                            Image(systemName: "building.2.crop.circle")
+                        }
                     }
                     Button {
                         showingAddSheet = true
@@ -330,9 +779,91 @@ struct InventoryView: View {
             .sheet(isPresented: $showingAddLocationSheet) {
                 AddLocationView()
             }
+            .sheet(item: $itemToEdit) { item in
+                EditItemView(item: item)
+            }
         }
     }
 }
+
+struct FoodItemRow: View {
+    let item: FoodItem
+    let onConsume: () -> Void
+    let onEdit: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(item.urgency.color.opacity(0.2))
+                    .frame(width: 44, height: 44)
+                Image(systemName: item.category.icon)
+                    .foregroundColor(item.urgency.color)
+                    .font(.system(size: 20))
+            }
+            
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(item.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    if let brand = item.brand, !brand.isEmpty {
+                        Text("(\(brand))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                HStack(spacing: 6) {
+                    Text("Lieu : \(item.location)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("•")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(item.urgency.label)
+                        .font(.caption2)
+                        .bold()
+                        .foregroundColor(item.urgency.color)
+                }
+                
+                Text("Expire le \(item.expiryDate.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 6) {
+                Text("Qté: \(item.quantity)")
+                    .bold()
+                    .font(.subheadline)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.cyan.opacity(0.15))
+                    .cornerRadius(6)
+                
+                Button(action: onConsume) {
+                    Text("-1")
+                        .font(.caption2)
+                        .bold()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.1))
+                        .foregroundColor(.red)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onEdit()
+        }
+    }
+}
+
+// MARK: - 2. Ajout & Édition d'articles
 
 struct AddItemView: View {
     @EnvironmentObject var inventory: InventoryManager
@@ -342,9 +873,12 @@ struct AddItemView: View {
     var selectedLocation: String
     
     @State private var name = ""
+    @State private var brand = ""
     @State private var quantity = 1
-    @State private var expiryDate = Date()
+    @State private var expiryDate = Date().addingTimeInterval(86400 * 30)
     @State private var location = "Maison"
+    @State private var category: FoodCategory = .other
+    @State private var notes = ""
     @State private var showAlertLimit = false
     
     private var availableLocations: [String] {
@@ -354,24 +888,50 @@ struct AddItemView: View {
     var body: some View {
         NavigationView {
             Form {
-                TextField("Nom de l'article", text: $name)
-                if availableLocations.count > 1 {
-                    Picker("Lieu", selection: $location) {
-                        ForEach(availableLocations, id: \.self) { loc in
-                            Text(loc).tag(loc)
+                Section("Détails du produit") {
+                    TextField("Nom de l'article (ex: Filet de poulet)", text: $name)
+                        .onChange(of: name) { newValue in
+                            category = FoodCategory.detect(from: newValue)
+                        }
+                    TextField("Marque (optionnel)", text: $brand)
+                    Picker("Catégorie", selection: $category) {
+                        ForEach(FoodCategory.allCases) { cat in
+                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
                         }
                     }
-                } else if let firstLocation = availableLocations.first {
-                    Text("Lieu : \(firstLocation)")
                 }
-                Stepper("Quantité : \(quantity)", value: $quantity, in: 1...50)
-                DatePicker("Expiration", selection: $expiryDate, displayedComponents: .date)
+                
+                Section("Stockage & Quantité") {
+                    if availableLocations.count > 1 {
+                        Picker("Lieu de stockage", selection: $location) {
+                            ForEach(availableLocations, id: \.self) { loc in
+                                Text(loc).tag(loc)
+                            }
+                        }
+                    } else if let firstLocation = availableLocations.first {
+                        HStack {
+                            Text("Lieu de stockage")
+                            Spacer()
+                            Text(firstLocation).foregroundColor(.secondary)
+                        }
+                    }
+                    Stepper("Quantité : \(quantity)", value: $quantity, in: 1...99)
+                    DatePicker("Date de péremption", selection: $expiryDate, displayedComponents: .date)
+                }
+                
+                Section("Notes (optionnel)") {
+                    TextField("Notes de décongélation, portion...", text: $notes)
+                }
             }
             .onAppear {
                 location = availableLocations.contains(selectedLocation) ? selectedLocation : (availableLocations.first ?? "Maison")
             }
-            .navigationTitle("Ajouter un article")
+            .navigationTitle("Ajouter au congélateur")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Annuler") { dismiss() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Enregistrer") {
                         let targetLocation = location.isEmpty ? (availableLocations.first ?? "Maison") : location
@@ -380,20 +940,101 @@ struct AddItemView: View {
                             quantity: quantity,
                             location: targetLocation,
                             expiryDate: expiryDate,
+                            brand: brand.isEmpty ? nil : brand,
+                            category: category,
+                            notes: notes.isEmpty ? nil : notes,
                             license: license
                         )
                         if success {
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
                             dismiss()
                         } else {
                             showAlertLimit = true
                         }
                     }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .alert("Limite atteinte", isPresented: $showAlertLimit) {
+            .alert("Limite de licence atteinte", isPresented: $showAlertLimit) {
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("Vérifiez les limites de licence (articles et lieux).")
+                Text("Votre formule actuelle (\(license.currentTier.rawValue)) limite le nombre total d'articles à \(license.currentTier.maxItems). Passez à Pro ou Famille pour débloquer le stockage illimité.")
+            }
+        }
+    }
+}
+
+struct EditItemView: View {
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    @Environment(\.dismiss) private var dismiss
+    
+    @State var item: FoodItem
+    
+    private var availableLocations: [String] {
+        inventory.visibleLocations(for: license.currentTier)
+    }
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Informations produit") {
+                    TextField("Nom", text: $item.name)
+                    TextField("Marque", text: Binding(
+                        get: { item.brand ?? "" },
+                        set: { item.brand = $0.isEmpty ? nil : $0 }
+                    ))
+                    Picker("Catégorie", selection: $item.category) {
+                        ForEach(FoodCategory.allCases) { cat in
+                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
+                        }
+                    }
+                }
+                
+                Section("Stockage & Quantité") {
+                    if availableLocations.count > 1 {
+                        Picker("Lieu", selection: $item.location) {
+                            ForEach(availableLocations, id: \.self) { loc in
+                                Text(loc).tag(loc)
+                            }
+                        }
+                    }
+                    Stepper("Quantité : \(item.quantity)", value: $item.quantity, in: 1...99)
+                    DatePicker("Péremption", selection: $item.expiryDate, displayedComponents: .date)
+                }
+                
+                Section("Notes") {
+                    TextField("Notes", text: Binding(
+                        get: { item.notes ?? "" },
+                        set: { item.notes = $0.isEmpty ? nil : $0 }
+                    ))
+                }
+                
+                Section {
+                    Button(role: .destructive) {
+                        inventory.deleteItem(withId: item.id)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("Supprimer cet article")
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Modifier l'article")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Fermer") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Sauvegarder") {
+                        inventory.updateItem(item)
+                        dismiss()
+                    }
+                }
             }
         }
     }
@@ -409,10 +1050,19 @@ struct AddLocationView: View {
     var body: some View {
         NavigationView {
             Form {
-                TextField("Nom du lieu (ex: Chalet)", text: $locationName)
+                Section("Nouveau lieu de stockage") {
+                    TextField("Ex: Congélateur Garage, Chalet, Cellier", text: $locationName)
+                }
+                Section(footer: Text("La version Gratuite comprend 1 lieu, Pro comprend 2 lieux, et Famille offre des lieux illimités.")) {
+                    EmptyView()
+                }
             }
             .navigationTitle("Ajouter un lieu")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Annuler") { dismiss() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Enregistrer") {
                         if inventory.addLocation(locationName, license: license) {
@@ -421,16 +1071,19 @@ struct AddLocationView: View {
                             showError = true
                         }
                     }
+                    .disabled(locationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .alert("Impossible d'ajouter ce lieu", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("Nom déjà utilisé ou limite de lieux atteinte pour cette licence.")
+                Text("Ce nom existe déjà ou votre licence (\(license.currentTier.rawValue)) limite le nombre de lieux à \(license.currentTier.maxLocations).")
             }
         }
     }
 }
+
+// MARK: - 3. Scanner Réel (Caméra AVFoundation + Mode Bulk Textuel + OpenFoodFacts)
 
 struct BulkScannerView: View {
     @EnvironmentObject var inventory: InventoryManager
@@ -441,6 +1094,8 @@ struct BulkScannerView: View {
     @State private var isLoading = false
     @State private var selectedLocation = "Maison"
     @State private var statusMessage = ""
+    @State private var isShowingCameraScanner = false
+    @State private var defaultDaysExpiry = 60
     
     private let service = OpenFoodFactsService()
     
@@ -451,53 +1106,139 @@ struct BulkScannerView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section("Scan Bulk (codes-barres)") {
+                Section {
+                    Button {
+                        isShowingCameraScanner = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "camera.fill")
+                                .font(.title2)
+                                .foregroundColor(.cyan)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Ouvrir le Scanner Caméra Réel")
+                                    .font(.headline)
+                                Text("Scannez directement les codes-barres avec votre iPhone")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                
+                Section("Saisie multiple / Scan Bulk") {
                     TextEditor(text: $barcodeInput)
-                        .frame(minHeight: 100)
-                    Text("Entrez plusieurs codes-barres (séparés par virgule, espace ou saut de ligne).")
-                        .font(.footnote)
+                        .frame(minHeight: 80)
+                    Text("Collez un ou plusieurs codes-barres (séparés par virgules, espaces ou retours à la ligne).")
+                        .font(.caption)
                         .foregroundColor(.secondary)
+                    
                     if availableLocations.count > 1 {
-                        Picker("Lieu cible", selection: $selectedLocation) {
+                        Picker("Lieu de destination", selection: $selectedLocation) {
                             ForEach(availableLocations, id: \.self) { loc in
                                 Text(loc).tag(loc)
                             }
                         }
                     }
-                    Button(isLoading ? "Chargement..." : "Récupérer depuis OpenFoodFacts") {
+                    
+                    Stepper("Durée de conservation : \(defaultDaysExpiry) jours", value: $defaultDaysExpiry, in: 7...365, step: 7)
+                    
+                    Button {
                         Task { await scanBulk() }
+                    } label: {
+                        HStack {
+                            if isLoading {
+                                ProgressView()
+                                    .padding(.trailing, 4)
+                            }
+                            Text(isLoading ? "Recherche OpenFoodFacts..." : "Interroger OpenFoodFacts")
+                        }
                     }
-                    .disabled(isLoading)
+                    .disabled(isLoading || barcodeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 
                 if !statusMessage.isEmpty {
                     Section("Statut") {
                         Text(statusMessage)
+                            .font(.subheadline)
                     }
                 }
                 
                 if !scannedProducts.isEmpty {
-                    Section("Produits détectés") {
+                    Section {
+                        HStack {
+                            Text("\(scannedProducts.count) produit(s) détecté(s)")
+                                .bold()
+                            Spacer()
+                            Button("Tout ajouter") {
+                                addAllToInventory()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    
+                    Section("Résultats OpenFoodFacts") {
                         ForEach(scannedProducts) { product in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(product.name).font(.headline)
-                                Text("Marque: \(product.brand)")
-                                    .font(.subheadline)
+                                HStack {
+                                    Image(systemName: product.category.icon)
+                                        .foregroundColor(.cyan)
+                                    Text(product.name)
+                                        .font(.headline)
+                                    Spacer()
+                                    if let score = product.nutriscore {
+                                        Text("Nutri-Score \(score)")
+                                            .font(.caption2)
+                                            .bold()
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.green.opacity(0.2))
+                                            .cornerRadius(4)
+                                    }
+                                }
+                                
+                                HStack {
+                                    Text("Marque : \(product.brand)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    if let qty = product.quantityText {
+                                        Text("• \(qty)")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                
+                                Text("Code : \(product.barcode)")
+                                    .font(.caption2)
                                     .foregroundColor(.secondary)
-                                Text("Code-barres: \(product.barcode)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Button("Ajouter à l'inventaire") {
+                                
+                                Button {
                                     let ok = inventory.addItem(
                                         name: product.name,
                                         quantity: 1,
                                         location: selectedLocation,
-                                        expiryDate: Date().addingTimeInterval(86400 * 30),
+                                        expiryDate: Date().addingTimeInterval(Double(defaultDaysExpiry) * 86400),
+                                        barcode: product.barcode,
+                                        brand: product.brand,
+                                        category: product.category,
+                                        imageURL: product.imageURL,
                                         license: license
                                     )
-                                    statusMessage = ok ? "Article ajouté: \(product.name)" : "Impossible d'ajouter \(product.name) (limite licence atteinte)."
+                                    if ok {
+                                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                        statusMessage = "Ajouté : \(product.name)"
+                                        scannedProducts.removeAll(where: { $0.id == product.id })
+                                    } else {
+                                        statusMessage = "Erreur : Limite de licence atteinte."
+                                    }
+                                } label: {
+                                    Label("Ajouter cet article", systemImage: "plus.circle")
                                 }
                                 .buttonStyle(.bordered)
+                                .padding(.top, 2)
                             }
                             .padding(.vertical, 4)
                         }
@@ -507,20 +1248,24 @@ struct BulkScannerView: View {
             .onAppear {
                 selectedLocation = availableLocations.first ?? "Maison"
             }
-            .navigationTitle("Scanner Bulk")
+            .sheet(isPresented: $isShowingCameraScanner) {
+                LiveBarcodeCameraSheet(selectedLocation: selectedLocation, defaultDaysExpiry: defaultDaysExpiry) { product in
+                    scannedProducts.insert(product, at: 0)
+                }
+            }
+            .navigationTitle("Scanner Produits")
         }
     }
     
     private func scanBulk() async {
         let codes = parseBarcodes(from: barcodeInput)
         guard !codes.isEmpty else {
-            statusMessage = "Aucun code-barres valide."
+            statusMessage = "Aucun code-barres valide saisi."
             return
         }
         
         isLoading = true
-        scannedProducts = []
-        statusMessage = ""
+        statusMessage = "Recherche en cours pour \(codes.count) code(s)..."
         
         var fetched: [ScannedProduct] = []
         for code in codes {
@@ -530,191 +1275,908 @@ struct BulkScannerView: View {
         }
         
         scannedProducts = fetched
-        statusMessage = "Résultat: \(fetched.count) / \(codes.count) produit(s) trouvés sur OpenFoodFacts."
+        statusMessage = "Résultat : \(fetched.count) sur \(codes.count) produit(s) trouvés dans la base OpenFoodFacts."
         isLoading = false
     }
     
+    private func addAllToInventory() {
+        var addedCount = 0
+        for product in scannedProducts {
+            let ok = inventory.addItem(
+                name: product.name,
+                quantity: 1,
+                location: selectedLocation,
+                expiryDate: Date().addingTimeInterval(Double(defaultDaysExpiry) * 86400),
+                barcode: product.barcode,
+                brand: product.brand,
+                category: product.category,
+                imageURL: product.imageURL,
+                license: license
+            )
+            if ok { addedCount += 1 }
+        }
+        statusMessage = "\(addedCount) article(s) ajouté(s) à votre inventaire !"
+        scannedProducts.removeAll()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+    
     private func parseBarcodes(from text: String) -> [String] {
-        let separators = CharacterSet(charactersIn: ",; \n\t")
+        let separators = CharacterSet(charactersIn: ",; \n\t\r")
         let values = text.components(separatedBy: separators)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+            .filter { !$0.isEmpty && $0.allSatisfy({ $0.isNumber }) }
         return Array(Set(values)).sorted()
     }
 }
+
+// MARK: - Feuille Caméra Live Scanner Réel
+
+struct LiveBarcodeCameraSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    
+    var selectedLocation: String
+    var defaultDaysExpiry: Int
+    var onProductScanned: (ScannedProduct) -> Void
+    
+    @State private var lastScannedCode = ""
+    @State private var isFetching = false
+    @State private var scanLogs: [String] = []
+    private let service = OpenFoodFactsService()
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                ZStack {
+                    RealCameraBarcodeScannerView { barcode in
+                        handleDetectedBarcode(barcode)
+                    }
+                    .frame(maxHeight: .infinity)
+                    
+                    // Réticule de visée
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.cyan, lineWidth: 3)
+                        .frame(width: 260, height: 160)
+                        .overlay(
+                            VStack {
+                                HStack {
+                                    Text("Pointez le code-barres")
+                                        .font(.caption)
+                                        .bold()
+                                        .padding(6)
+                                        .background(Color.black.opacity(0.6))
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                }
+                                Spacer()
+                                if isFetching {
+                                    HStack {
+                                        ProgressView()
+                                            .tint(.white)
+                                        Text("Recherche OpenFoodFacts...")
+                                            .font(.caption2)
+                                            .foregroundColor(.white)
+                                    }
+                                    .padding(6)
+                                    .background(Color.black.opacity(0.7))
+                                    .cornerRadius(8)
+                                }
+                            }
+                            .padding(8)
+                        )
+                }
+                
+                // Historique du scan
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Derniers scans :")
+                        .font(.caption)
+                        .bold()
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            if scanLogs.isEmpty {
+                                Text("Placez un code-barres sous la caméra.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal)
+                            } else {
+                                ForEach(scanLogs, id: \.self) { log in
+                                    Text("• \(log)")
+                                        .font(.caption2)
+                                        .padding(.horizontal)
+                                }
+                            }
+                        }
+                    }
+                    .frame(height: 80)
+                }
+                .background(Color(UIColor.secondarySystemBackground))
+            }
+            .navigationTitle("Scanner Caméra")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Terminer") { dismiss() }
+                }
+            }
+        }
+    }
+    
+    private func handleDetectedBarcode(_ code: String) {
+        guard code != lastScannedCode, !isFetching else { return }
+        lastScannedCode = code
+        isFetching = true
+        AudioServicesPlaySystemSound(1057)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        
+        Task {
+            if let product = await service.fetchProduct(for: code) {
+                onProductScanned(product)
+                let ok = inventory.addItem(
+                    name: product.name,
+                    quantity: 1,
+                    location: selectedLocation,
+                    expiryDate: Date().addingTimeInterval(Double(defaultDaysExpiry) * 86400),
+                    barcode: product.barcode,
+                    brand: product.brand,
+                    category: product.category,
+                    imageURL: product.imageURL,
+                    license: license
+                )
+                DispatchQueue.main.async {
+                    if ok {
+                        scanLogs.insert("✅ Ajouté : \(product.name) (\(code))", at: 0)
+                    } else {
+                        scanLogs.insert("⚠️ Limite licence atteinte pour \(product.name)", at: 0)
+                    }
+                    isFetching = false
+                }
+            } else {
+                DispatchQueue.main.async {
+                    scanLogs.insert("❌ Non trouvé : \(code)", at: 0)
+                    isFetching = false
+                }
+            }
+        }
+    }
+}
+
+// Scanner natif AVFoundation
+struct RealCameraBarcodeScannerView: UIViewControllerRepresentable {
+    var onBarcodeDetected: (String) -> Void
+    
+    func makeUIViewController(context: Context) -> BarcodeScannerViewController {
+        let controller = BarcodeScannerViewController()
+        controller.delegate = context.coordinator
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: BarcodeScannerViewController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onBarcodeDetected: onBarcodeDetected)
+    }
+    
+    class Coordinator: NSObject, BarcodeScannerDelegate {
+        var onBarcodeDetected: (String) -> Void
+        
+        init(onBarcodeDetected: @escaping (String) -> Void) {
+            self.onBarcodeDetected = onBarcodeDetected
+        }
+        
+        func didFindBarcode(_ code: String) {
+            onBarcodeDetected(code)
+        }
+    }
+}
+
+protocol BarcodeScannerDelegate: AnyObject {
+    func didFindBarcode(_ code: String)
+}
+
+class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    weak var delegate: BarcodeScannerDelegate?
+    private var captureSession: AVCaptureSession?
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        setupCamera()
+    }
+    
+    private func setupCamera() {
+        let session = AVCaptureSession()
+        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else { return }
+        guard let videoInput = try? AVCaptureDeviceInput(device: videoCaptureDevice) else { return }
+        
+        if session.canAddInput(videoInput) {
+            session.addInput(videoInput)
+        } else {
+            return
+        }
+        
+        let metadataOutput = AVCaptureMetadataOutput()
+        if session.canAddOutput(metadataOutput) {
+            session.addOutput(metadataOutput)
+            metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+            metadataOutput.metadataObjectTypes = [.ean13, .ean8, .qr, .code128, .upce]
+        } else {
+            return
+        }
+        
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.frame = view.layer.bounds
+        preview.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(preview)
+        
+        self.previewLayer = preview
+        self.captureSession = session
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+        }
+    }
+    
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.layer.bounds
+    }
+    
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        if let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+           let stringValue = metadataObject.stringValue {
+            delegate?.didFindBarcode(stringValue)
+        }
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.captureSession?.stopRunning()
+        }
+    }
+}
+
+// MARK: - 4. Trouveur d'Objet Réel avec Reconnaissance Visuelle (Vision OCR + Caméra)
 
 struct ObjectFinderView: View {
     @EnvironmentObject var inventory: InventoryManager
     @EnvironmentObject var license: LicenseManager
     
     @State private var selectedItemID: UUID?
-    @State private var isSearching = false
-    @State private var found = false
+    @State private var isRunningDetector = true
+    @State private var targetFound = false
+    @State private var detectedTargetText = ""
+    @State private var boundingBox: CGRect? = nil
+    
+    private var selectedItem: FoodItem? {
+        inventory.items.first(where: { $0.id == selectedItemID })
+    }
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 18) {
+            VStack(spacing: 16) {
                 if !license.currentTier.hasAILocator {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.orange)
-                    Text("Le trouveur visuel est disponible en Pro et Famille.")
-                        .multilineTextAlignment(.center)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal)
-                } else {
-                    if inventory.items.isEmpty {
-                        Text("Ajoutez d'abord des produits à l'inventaire.")
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Image(systemName: "lock.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundColor(.orange)
+                        Text("Localisateur Visuel IA")
+                            .font(.title2)
+                            .bold()
+                        Text("Cette fonctionnalité utilise la caméra et le framework Apple Vision pour détecter visuellement vos produits dans le congélateur. Disponible avec les licences Pro et Famille.")
+                            .multilineTextAlignment(.center)
                             .foregroundColor(.secondary)
-                    } else {
-                        Picker("Produit à trouver", selection: $selectedItemID) {
+                            .padding(.horizontal, 32)
+                        
+                        Button("Passer à la formule Pro (4,99 $)") {
+                            license.upgrade(to: .pro)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 8)
+                        Spacer()
+                    }
+                } else if inventory.items.isEmpty {
+                    VStack(spacing: 12) {
+                        Spacer()
+                        Image(systemName: "viewfinder")
+                            .font(.system(size: 54))
+                            .foregroundColor(.secondary)
+                        Text("Aucun produit dans l'inventaire")
+                            .font(.headline)
+                        Text("Ajoutez d'abord des produits dans votre inventaire pour les localiser.")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Article recherché :")
+                            .font(.caption)
+                            .bold()
+                            .foregroundColor(.secondary)
+                        
+                        Picker("Sélectionnez le produit", selection: $selectedItemID) {
                             ForEach(inventory.items) { item in
-                                Text(item.name).tag(Optional(item.id))
+                                Text("\(item.name) (\(item.location))").tag(Optional(item.id))
                             }
                         }
                         .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    .padding(.horizontal)
+                    
+                    // Vue Caméra Réelle avec Vision
+                    ZStack {
+                        RealVisionCameraView(
+                            targetKeywords: getKeywords(for: selectedItem),
+                            onTargetMatched: { matchedText, rect in
+                                if !targetFound {
+                                    targetFound = true
+                                    detectedTargetText = matchedText
+                                    boundingBox = rect
+                                    AudioServicesPlaySystemSound(1057)
+                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                }
+                            }
+                        )
+                        .cornerRadius(16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(targetFound ? Color.green : Color.cyan.opacity(0.5), lineWidth: 3)
+                        )
                         
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.black)
-                                .frame(height: 240)
-                                .overlay(
-                                    Text("Vue caméra iPhone")
-                                        .foregroundColor(.white.opacity(0.7))
-                                )
-                            
-                            if found {
+                        // Encadrement visuel direct
+                        if targetFound, let rect = boundingBox {
+                            GeometryReader { geo in
+                                let w = geo.size.width * rect.width
+                                let h = geo.size.height * rect.height
+                                let x = geo.size.width * rect.origin.x
+                                let y = geo.size.height * (1.0 - rect.origin.y - rect.height)
+                                
                                 RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color.green, lineWidth: 4)
-                                    .frame(width: 180, height: 90)
-                                    .offset(x: 35, y: -20)
+                                    .frame(width: max(80, w), height: max(40, h))
+                                    .position(x: x + w/2, y: y + h/2)
+                                    .overlay(
+                                        Text("TROUVÉ : \(detectedTargetText)")
+                                            .font(.caption2)
+                                            .bold()
+                                            .padding(4)
+                                            .background(Color.green)
+                                            .foregroundColor(.black)
+                                            .cornerRadius(4)
+                                            .position(x: x + w/2, y: max(20, y))
+                                    )
                             }
                         }
                         
-                        Text("Analyse visuelle inspirée des images de référence OpenFoodFacts.")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        
-                        Button(isSearching ? "Analyse en cours..." : "Trouver dans le frigo/congélo") {
-                            runDetection()
+                        // Message overlay
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Image(systemName: targetFound ? "checkmark.circle.fill" : "eye.fill")
+                                    .foregroundColor(targetFound ? .green : .white)
+                                Text(targetFound ? "Produit repéré avec succès !" : "Balayez le congélateur avec la caméra...")
+                                    .font(.caption)
+                                    .bold()
+                                    .foregroundColor(.white)
+                                Spacer()
+                                if targetFound {
+                                    Button("Rechercher à nouveau") {
+                                        targetFound = false
+                                        boundingBox = nil
+                                    }
+                                    .font(.caption2)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.white)
+                                    .foregroundColor(.black)
+                                    .cornerRadius(6)
+                                }
+                            }
+                            .padding(10)
+                            .background(Color.black.opacity(0.75))
+                            .cornerRadius(10)
+                            .padding(12)
                         }
-                        .disabled(isSearching || selectedItemID == nil)
-                        .buttonStyle(.borderedProminent)
                     }
+                    .frame(height: 340)
+                    .padding(.horizontal)
+                    
+                    Text("La caméra analyse en temps réel les emballages (texte, marques, codes) pour localiser précisément l'article dans vos tiroirs.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    
+                    Spacer()
                 }
-                Spacer()
             }
-            .padding()
             .onAppear {
-                selectedItemID = inventory.items.first?.id
+                if selectedItemID == nil {
+                    selectedItemID = inventory.items.first?.id
+                }
             }
-            .navigationTitle("Trouveur d'objet")
+            .navigationTitle("Trouveur d'Objet IA")
         }
     }
     
-    private func runDetection() {
-        isSearching = true
-        found = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
-            found = true
-            isSearching = false
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+    private func getKeywords(for item: FoodItem?) -> [String] {
+        guard let item = item else { return [] }
+        var words: [String] = []
+        let nameParts = item.name.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 3 }
+        words.append(contentsOf: nameParts)
+        if let brand = item.brand?.lowercased(), brand.count >= 3 {
+            words.append(brand)
+        }
+        return words
+    }
+}
+
+// Vue Vision Live OCR
+struct RealVisionCameraView: UIViewControllerRepresentable {
+    var targetKeywords: [String]
+    var onTargetMatched: (String, CGRect) -> Void
+    
+    func makeUIViewController(context: Context) -> VisionCameraViewController {
+        let vc = VisionCameraViewController()
+        vc.targetKeywords = targetKeywords
+        vc.onMatch = onTargetMatched
+        return vc
+    }
+    
+    func updateUIViewController(_ uiViewController: VisionCameraViewController, context: Context) {
+        uiViewController.targetKeywords = targetKeywords
+        uiViewController.onMatch = onTargetMatched
+    }
+}
+
+class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
+    var targetKeywords: [String] = []
+    var onMatch: ((String, CGRect) -> Void)?
+    
+    private var captureSession: AVCaptureSession?
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var isProcessing = false
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        setupCamera()
+    }
+    
+    private func setupCamera() {
+        let session = AVCaptureSession()
+        session.sessionPreset = .high
+        
+        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+              let videoInput = try? AVCaptureDeviceInput(device: videoDevice) else {
+            return
+        }
+        
+        if session.canAddInput(videoInput) {
+            session.addInput(videoInput)
+        } else {
+            return
+        }
+        
+        let videoOutput = AVCaptureVideoDataOutput()
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "vision.frame.processing"))
+        
+        if session.canAddOutput(videoOutput) {
+            session.addOutput(videoOutput)
+        }
+        
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.frame = view.layer.bounds
+        preview.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(preview)
+        
+        self.previewLayer = preview
+        self.captureSession = session
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+        }
+    }
+    
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.layer.bounds
+    }
+    
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard !isProcessing, !targetKeywords.isEmpty else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        
+        isProcessing = true
+        
+        let request = VNRecognizeTextRequest { [weak self] request, error in
+            defer { self?.isProcessing = false }
+            guard let self = self, error == nil,
+                  let observations = request.results as? [VNRecognizedTextObservation] else {
+                return
+            }
+            
+            for observation in observations {
+                guard let candidate = observation.topCandidates(1).first else { continue }
+                let recognizedString = candidate.string.lowercased()
+                
+                for keyword in self.targetKeywords {
+                    if recognizedString.contains(keyword) {
+                        DispatchQueue.main.async {
+                            self.onMatch?(candidate.string, observation.boundingBox)
+                        }
+                        return
+                    }
+                }
+            }
+        }
+        
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right, options: [:])
+        try? handler.perform([request])
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.captureSession?.stopRunning()
         }
     }
 }
 
+// MARK: - 5. Module Matériel ESP32-CAM Réel
+
 struct HardwareView: View {
+    @AppStorage("congelo_esp32_ip") private var streamIP = "192.168.1.50"
+    @AppStorage("congelo_esp32_port") private var streamPort = "80"
+    @AppStorage("congelo_esp32_path") private var streamPath = "/capture"
+    
     @State private var isConnected = false
-    @State private var streamURL = "http://192.168.1.50/stream"
+    @State private var isFetchingSnapshot = false
+    @State private var latestSnapshot: UIImage? = nil
+    @State private var statusText = "En attente de connexion"
+    @State private var latencyMs: Int? = nil
+    @State private var autoRefreshTimer: Timer? = nil
+    @State private var autoRefresh = false
+    @State private var detectedItems: [String] = []
+    
+    private var fullURLString: String {
+        "http://\(streamIP):\(streamPort)\(streamPath)"
+    }
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Station ESP32-CAM (Matériel Optionnel)")) {
-                    TextField("Adresse IP du module", text: $streamURL)
-                    Toggle("Activer le flux vidéo", isOn: $isConnected)
+                Section(header: Text("Configuration Station ESP32-CAM")) {
+                    HStack {
+                        Text("IP :")
+                            .bold()
+                        TextField("192.168.1.50", text: $streamIP)
+                            .keyboardType(.decimalPad)
+                    }
+                    HStack {
+                        Text("Port :")
+                            .bold()
+                        TextField("80", text: $streamPort)
+                            .keyboardType(.numberPad)
+                    }
+                    HStack {
+                        Text("Point d'accès :")
+                            .bold()
+                        TextField("/capture ou /stream", text: $streamPath)
+                    }
+                    
+                    Button {
+                        Task { await testConnection() }
+                    } label: {
+                        HStack {
+                            Text("Tester la connexion")
+                            Spacer()
+                            if isFetchingSnapshot {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    
+                    Toggle("Rafraîchissement automatique (2s)", isOn: $autoRefresh)
+                        .onChange(of: autoRefresh) { active in
+                            if active {
+                                startAutoRefresh()
+                            } else {
+                                stopAutoRefresh()
+                            }
+                        }
                 }
                 
-                Section(header: Text("Aperçu de la caméra (Fisheye)")) {
-                    if isConnected {
-                        Rectangle()
-                            .fill(Color.black)
-                            .frame(height: 220)
-                            .overlay(
-                                Text("🔴 Flux direct ESP32-CAM actif\n(Porte du congélateur)")
-                                    .foregroundColor(.white)
-                                    .multilineTextAlignment(.center)
-                            )
-                            .cornerRadius(8)
-                    } else {
-                        Text("Module déconnecté ou en veille.")
-                            .foregroundColor(.secondary)
+                Section(header: Text("Flux / Capture Réelle (ESP32-CAM Fisheye)")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let image = latestSnapshot {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxHeight: 240)
+                                .cornerRadius(8)
+                        } else {
+                            ZStack {
+                                Rectangle()
+                                    .fill(Color.black.opacity(0.85))
+                                    .frame(height: 200)
+                                    .cornerRadius(8)
+                                VStack(spacing: 6) {
+                                    Image(systemName: "camera.viewfinder")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(.cyan)
+                                    Text(isConnected ? "Flux prêt" : "Module hors ligne")
+                                        .foregroundColor(.white)
+                                        .font(.subheadline)
+                                    Text(statusText)
+                                        .foregroundColor(.white.opacity(0.7))
+                                        .font(.caption2)
+                                }
+                            }
+                        }
+                        
+                        HStack {
+                            Circle()
+                                .fill(isConnected ? Color.green : Color.red)
+                                .frame(width: 10, height: 10)
+                            Text(isConnected ? "En ligne" : "Déconnecté")
+                                .font(.caption)
+                                .bold()
+                            if let ms = latencyMs {
+                                Text("• \(ms) ms")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button("Capturer") {
+                                Task { await fetchSnapshot() }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isFetchingSnapshot)
+                        }
                     }
                 }
                 
-                Section(header: Text("Informations du Kit")) {
-                    Text("Coût de revient estimé : 15,00 $")
-                    Text("Prix public conseillé : 25,00 $ (Marge fixe : 10 $)")
+                if !detectedItems.isEmpty {
+                    Section("Objets détectés sur le cliché ESP32") {
+                        ForEach(detectedItems, id: \.self) { item in
+                            Label(item, systemImage: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        }
+                    }
+                }
+                
+                Section(header: Text("Détails Économiques du Kit")) {
+                    HStack {
+                        Text("Coût de revient estimé")
+                        Spacer()
+                        Text("15,00 $").bold()
+                    }
+                    HStack {
+                        Text("Prix public conseillé")
+                        Spacer()
+                        Text("25,00 $").bold()
+                    }
+                    HStack {
+                        Text("Marge nette unitaire")
+                        Spacer()
+                        Text("+10,00 $").bold().foregroundColor(.green)
+                    }
                 }
             }
-            .navigationTitle("Boîtier Matériel")
+            .navigationTitle("Station ESP32-CAM")
+            .onDisappear {
+                stopAutoRefresh()
+            }
         }
+    }
+    
+    private func testConnection() async {
+        isFetchingSnapshot = true
+        statusText = "Connexion à \(fullURLString)..."
+        let start = CFAbsoluteTimeGetCurrent()
+        
+        guard let url = URL(string: fullURLString) else {
+            statusText = "URL invalide"
+            isConnected = false
+            isFetchingSnapshot = false
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 4
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let diff = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
+            latencyMs = diff
+            
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+               let img = UIImage(data: data) {
+                latestSnapshot = img
+                isConnected = true
+                statusText = "Connecté avec succès (\(diff) ms)"
+                analyzeSnapshot(img)
+            } else {
+                isConnected = true
+                statusText = "Réponse reçue (\(diff) ms)"
+            }
+        } catch {
+            isConnected = false
+            statusText = "Échec : \(error.localizedDescription)"
+            latencyMs = nil
+        }
+        isFetchingSnapshot = false
+    }
+    
+    private func fetchSnapshot() async {
+        await testConnection()
+    }
+    
+    private func startAutoRefresh() {
+        autoRefreshTimer?.invalidate()
+        autoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            Task { await testConnection() }
+        }
+    }
+    
+    private func stopAutoRefresh() {
+        autoRefreshTimer?.invalidate()
+        autoRefreshTimer = nil
+    }
+    
+    private func analyzeSnapshot(_ image: UIImage) {
+        guard let cgImage = image.cgImage else { return }
+        let request = VNRecognizeTextRequest { req, err in
+            guard err == nil, let results = req.results as? [VNRecognizedTextObservation] else { return }
+            let detected = results.compactMap { $0.topCandidates(1).first?.string }
+                .filter { $0.count > 2 }
+            DispatchQueue.main.async {
+                self.detectedItems = Array(detected.prefix(5))
+            }
+        }
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try? handler.perform([request])
     }
 }
 
+// MARK: - 6. Partage Familial iCloud Réel
+
 struct FamilySharingView: View {
     @StateObject private var familySharing = FamilySharingManager()
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
     @State private var newMemberEmail = ""
     @State private var showError = false
+    @State private var shareSheetPresented = false
+    @State private var exportContent = ""
     
     var body: some View {
         Form {
-            Section("Partager via iCloud") {
-                TextField("Email d'un membre", text: $newMemberEmail)
+            Section(header: Text("Ajout de membre iCloud")) {
+                TextField("Email iCloud du membre", text: $newMemberEmail)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("Ajouter le membre") {
+                    .keyboardType(.emailAddress)
+                Button("Inviter le membre") {
                     if familySharing.addMember(email: newMemberEmail) {
                         newMemberEmail = ""
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
                     } else {
                         showError = true
                     }
                 }
+                .disabled(newMemberEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             
-            Section("Membres de la famille") {
+            Section(header: Text("Membres du cercle familial")) {
                 if familySharing.members.isEmpty {
-                    Text("Aucun membre pour le moment.")
+                    Text("Aucun membre enregistré. Ajoutez les membres de votre foyer pour synchroniser les stocks.")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(familySharing.members, id: \.self) { member in
-                        Text(member)
+                        HStack {
+                            Image(systemName: "person.crop.circle.fill")
+                                .foregroundColor(.cyan)
+                            Text(member)
+                            Spacer()
+                            Text("Actif")
+                                .font(.caption2)
+                                .foregroundColor(.green)
+                        }
                     }
                     .onDelete(perform: familySharing.removeMember)
                 }
             }
+            
+            Section(header: Text("Synchronisation des stocks")) {
+                if let lastSync = familySharing.lastSyncDate {
+                    Text("Dernière synchronisation : \(lastSync.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Button("Exporter les stocks pour un proche") {
+                    if let json = inventory.exportJSON() {
+                        exportContent = json
+                        shareSheetPresented = true
+                    }
+                }
+            }
         }
-        .navigationTitle("Partage Familial")
-        .alert("Adresse invalide ou déjà présente", isPresented: $showError) {
+        .navigationTitle("Partage Familial iCloud")
+        .alert("Adresse email invalide ou déjà présente", isPresented: $showError) {
             Button("OK", role: .cancel) { }
+        }
+        .sheet(isPresented: $shareSheetPresented) {
+            ActivityViewController(activityItems: [exportContent])
         }
     }
 }
 
+struct ActivityViewController: UIViewControllerRepresentable {
+    var activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - 7. Réglages, Licences & Données
+
 struct SettingsView: View {
     @EnvironmentObject var license: LicenseManager
+    @EnvironmentObject var inventory: InventoryManager
+    
+    @State private var showingImportAlert = false
+    @State private var importString = ""
+    @State private var importStatus = ""
+    @State private var showingResetAlert = false
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Licence Actuelle")) {
-                    Text("Formule : \(license.currentTier.rawValue)")
-                        .bold()
+                Section(header: Text("Formule Active")) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(license.currentTier.rawValue)
+                                .font(.headline)
+                                .bold()
+                            Text("Limite articles : \(license.currentTier.maxItems == Int.max ? "Illimité" : "\(license.currentTier.maxItems)")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("Lieux autorisés : \(license.currentTier.maxLocations == Int.max ? "Illimité" : "\(license.currentTier.maxLocations)")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.cyan)
+                            .font(.title)
+                    }
+                    
                     Text("Appareils enregistrés : \(license.registeredDeviceIDs.count) / \(license.currentTier.maxDevices == Int.max ? "illimité" : "\(license.currentTier.maxDevices)")")
-                        .font(.subheadline)
+                        .font(.footnote)
                         .foregroundColor(.secondary)
+                    
                     if let error = license.deviceRegistrationError {
                         Text(error)
                             .font(.footnote)
@@ -722,32 +2184,100 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("Modifier la Licence (Achat Unique)")) {
-                    Button("Passer à la Version Gratuite (0 $)") {
+                Section(header: Text("Sélectionner une licence (Achat Unique)")) {
+                    Button {
                         license.upgrade(to: .free)
+                    } label: {
+                        HStack {
+                            Text("Gratuite (0,00 $)")
+                            Spacer()
+                            if license.currentTier == .free {
+                                Image(systemName: "checkmark")
+                            }
+                        }
                     }
-                    Button("Acheter la Version Pro (4,99 $)") {
+                    
+                    Button {
                         license.upgrade(to: .pro)
+                    } label: {
+                        HStack {
+                            Text("Pro (4,99 $) • Trouveur IA & Multi-Lieux")
+                            Spacer()
+                            if license.currentTier == .pro {
+                                Image(systemName: "checkmark")
+                            }
+                        }
                     }
-                    Button("Acheter la Version Famille (9,99 $)") {
+                    
+                    Button {
                         license.upgrade(to: .family)
+                    } label: {
+                        HStack {
+                            Text("Famille (9,99 $) • Recettes & Partage iCloud")
+                            Spacer()
+                            if license.currentTier == .family {
+                                Image(systemName: "checkmark")
+                            }
+                        }
                     }
                 }
                 
                 if license.currentTier.hasFamilySharing {
-                    Section(header: Text("Partage familial")) {
-                        NavigationLink("Gérer le partage iCloud") {
+                    Section(header: Text("Options Famille")) {
+                        NavigationLink("Gérer le partage familial iCloud") {
                             FamilySharingView()
                         }
                     }
                 }
                 
-                Section(header: Text("À propos")) {
-                    Text("Congelo - Écosystème de gestion domestique intelligent.")
-                    Text("Compatible iOS 16 et supérieur.")
+                Section(header: Text("Sauvegarde & Restauration")) {
+                    Button("Sauvegarder les données (Export JSON)") {
+                        if let json = inventory.exportJSON() {
+                            UIPasteboard.general.string = json
+                            importStatus = "Données JSON copiées dans le presse-papier !"
+                        }
+                    }
+                    
+                    Button("Restaurer depuis le presse-papier") {
+                        if let clip = UIPasteboard.general.string {
+                            let res = inventory.importJSON(clip, license: license)
+                            importStatus = "\(res.imported) article(s) importé(s)."
+                        } else {
+                            importStatus = "Presse-papier vide."
+                        }
+                    }
+                    
+                    if !importStatus.isEmpty {
+                        Text(importStatus)
+                            .font(.caption)
+                            .foregroundColor(.cyan)
+                    }
+                }
+                
+                Section(header: Text("Maintenance")) {
+                    Button(role: .destructive) {
+                        showingResetAlert = true
+                    } label: {
+                        Text("Réinitialiser les appareils enregistrés")
+                    }
+                }
+                
+                Section(header: Text("À propos de Congelo")) {
+                    Text("Congelo — Écosystème intelligent de gestion du froid.")
+                    Text("Version 2.0 • Compatible iOS 16 et supérieur.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                 }
             }
-            .navigationTitle("Réglages & Licences")
+            .navigationTitle("Licence & Réglages")
+            .alert("Réinitialisation", isPresented: $showingResetAlert) {
+                Button("Annuler", role: .cancel) { }
+                Button("Réinitialiser", role: .destructive) {
+                    license.resetRegisteredDevices()
+                }
+            } message: {
+                Text("Voulez-vous réinitialiser la liste des appareils liés à cette licence ?")
+            }
         }
     }
 }

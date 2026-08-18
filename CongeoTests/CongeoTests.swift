@@ -11,26 +11,93 @@ import XCTest
 final class CongeoTests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
+        super.setUp()
     }
 
     override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
+        super.tearDown()
     }
 
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
+    func testLicenseManagerTiers() throws {
+        let license = LicenseManager()
+        
+        license.upgrade(to: .free)
+        XCTAssertEqual(license.currentTier, .free)
+        XCTAssertEqual(license.currentTier.maxItems, 20)
+        XCTAssertEqual(license.currentTier.maxLocations, 1)
+        XCTAssertFalse(license.currentTier.hasAILocator)
+        XCTAssertFalse(license.currentTier.hasAntiWasteRecipeGenerator)
+        
+        license.upgrade(to: .pro)
+        XCTAssertEqual(license.currentTier, .pro)
+        XCTAssertEqual(license.currentTier.maxItems, Int.max)
+        XCTAssertEqual(license.currentTier.maxLocations, 2)
+        XCTAssertTrue(license.currentTier.hasAILocator)
+        XCTAssertFalse(license.currentTier.hasAntiWasteRecipeGenerator)
+        
+        license.upgrade(to: .family)
+        XCTAssertEqual(license.currentTier, .family)
+        XCTAssertEqual(license.currentTier.maxItems, Int.max)
+        XCTAssertEqual(license.currentTier.maxLocations, Int.max)
+        XCTAssertTrue(license.currentTier.hasAILocator)
+        XCTAssertTrue(license.currentTier.hasAntiWasteRecipeGenerator)
+        XCTAssertTrue(license.currentTier.hasFamilySharing)
     }
 
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        self.measure {
-            // Put the code you want to measure the time of here.
+    func testCategoryDetection() throws {
+        XCTAssertEqual(FoodCategory.detect(from: "Steak haché 15%"), .meat)
+        XCTAssertEqual(FoodCategory.detect(from: "Filet de saumon sauvage"), .fish)
+        XCTAssertEqual(FoodCategory.detect(from: "Haricots verts extra-fins"), .vegetables)
+        XCTAssertEqual(FoodCategory.detect(from: "Framboises surgelées"), .fruits)
+        XCTAssertEqual(FoodCategory.detect(from: "Pizza 4 fromages"), .readyMeals)
+        XCTAssertEqual(FoodCategory.detect(from: "Baguette tradition"), .bakery)
+        XCTAssertEqual(FoodCategory.detect(from: "Glace vanille pécan"), .dairy)
+    }
+
+    func testInventoryItemManagement() throws {
+        let inventory = InventoryManager()
+        let license = LicenseManager()
+        license.upgrade(to: .pro)
+        
+        let initialCount = inventory.items.count
+        let success = inventory.addItem(
+            name: "Test Poulet",
+            quantity: 3,
+            location: "Maison",
+            expiryDate: Date().addingTimeInterval(86400 * 2),
+            license: license
+        )
+        XCTAssertTrue(success)
+        XCTAssertEqual(inventory.items.count, initialCount + 1)
+        
+        let added = inventory.items.first(where: { $0.name == "Test Poulet" })
+        XCTAssertNotNil(added)
+        XCTAssertEqual(added?.urgency, .critical)
+        
+        // Consommation
+        if let id = added?.id {
+            inventory.consumeItem(withId: id, count: 1)
+            let updated = inventory.items.first(where: { $0.id == id })
+            XCTAssertEqual(updated?.quantity, 2)
+            
+            inventory.deleteItem(withId: id)
+            XCTAssertNil(inventory.items.first(where: { $0.id == id }))
         }
     }
 
+    func testRecipeEngineGeneration() throws {
+        let testItems = [
+            FoodItem(name: "Filet de poulet", quantity: 2, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 2), category: .meat),
+            FoodItem(name: "Brocolis", quantity: 1, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 3), category: .vegetables)
+        ]
+        
+        let recipes = RecipeEngine.generateRecipes(from: testItems)
+        XCTAssertFalse(recipes.isEmpty)
+        
+        let firstRecipe = recipes.first
+        XCTAssertNotNil(firstRecipe)
+        XCTAssertFalse(firstRecipe!.steps.isEmpty)
+        XCTAssertFalse(firstRecipe!.pantryStaples.isEmpty)
+        XCTAssertTrue(firstRecipe!.matchedInventoryItemNames.contains("Filet de poulet") || firstRecipe!.matchedInventoryItemNames.contains("Brocolis"))
+    }
 }
