@@ -781,11 +781,10 @@ struct LocalRecipeEngine {
         
         var availableMeat = sortedItems.filter { isMeatLike($0) }
         var availableFish = sortedItems.filter { isFishLike($0) }
-        var availableVeg = sortedItems.filter { isVegetableLike($0) }
-        var availableDairy = sortedItems.filter { isDairyLike($0) }
-        var availableFruits = sortedItems.filter { isFruitLike($0) }
-        var availableBread = sortedItems.filter { isBreadLike($0) }
-        var availablePastaRice = sortedItems.filter { isPastaOrRiceLike($0) }
+        let availableVeg = sortedItems.filter { isVegetableLike($0) }
+        let availableFruits = sortedItems.filter { isFruitLike($0) }
+        let availableBread = sortedItems.filter { isBreadLike($0) }
+        let availablePastaRice = sortedItems.filter { isPastaOrRiceLike($0) }
         
         if isVeggieOnly {
             availableMeat = []
@@ -1931,7 +1930,7 @@ struct RecipeCardView: View {
                             Spacer()
                             
                             Button {
-                                let count = grocery.addMissingIngredients(from: recipe.title, missing: recipe.missingIngredients)
+                                _ = grocery.addMissingIngredients(from: recipe.title, missing: recipe.missingIngredients)
                                 withAnimation { addedToGroceryToast = true }
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                                     withAnimation { addedToGroceryToast = false }

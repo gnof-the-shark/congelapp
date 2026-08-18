@@ -296,6 +296,21 @@ enum FoodCategory: String, CaseIterable, Identifiable, Codable {
         }
     }
     
+    var iconName: String { icon }
+    
+    var color: Color {
+        switch self {
+        case .meat: return .red
+        case .fish: return .blue
+        case .vegetables: return .green
+        case .fruits: return .orange
+        case .readyMeals: return .purple
+        case .bakery: return .yellow
+        case .dairy: return .cyan
+        case .other: return .gray
+        }
+    }
+    
     static func detect(from text: String) -> FoodCategory {
         let lower = text.lowercased()
         if lower.contains("steak") || lower.contains("boeuf") || lower.contains("poulet") || lower.contains("porc") || lower.contains("viande") || lower.contains("haché") || lower.contains("dinde") || lower.contains("saucisse") || lower.contains("jambon") {
@@ -378,6 +393,7 @@ struct FoodItem: Identifiable, Codable, Equatable {
     }
 }
 
+@MainActor
 class InventoryManager: ObservableObject {
     private let itemsKey = "congelo_inventory_items_v2"
     private let locationsKey = "congelo_inventory_locations_v2"
@@ -646,6 +662,7 @@ actor OpenFoodFactsService {
 
 // MARK: - iCloud & Partage Familial Réel
 
+@MainActor
 final class FamilySharingManager: ObservableObject {
     @Published var members: [String] = []
     @Published var lastSyncDate: Date?
@@ -3028,177 +3045,199 @@ struct GroceryListView: View {
     
     private var mainGroceryContentView: some View {
         VStack(spacing: 0) {
-            // Bannière Statut iCloud Temps Réel
-            HStack(spacing: 8) {
-                Image(systemName: "icloud.fill")
-                    .foregroundColor(.cyan)
-                    .font(.subheadline)
-                
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text("iCloud Partage Familial")
-                            .font(.caption2)
-                            .bold()
-                        Text("• En direct")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                    }
-                    Text(grocery.syncStatusMessage)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                if grocery.isSyncing {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                } else {
-                    Button {
-                        grocery.forceSync()
-                    } label: {
-                        Text("Synchro")
-                            .font(.caption2)
-                            .bold()
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.cyan.opacity(0.15))
-                            .foregroundColor(.cyan)
-                            .cornerRadius(6)
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Color(UIColor.secondarySystemBackground))
-            
+            syncBannerView
             Divider()
             
-            // Barre d'ajout rapide
             GroceryQuickAddBar()
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             
-            // Filtres (Tous / À acheter / Achetés)
-            Picker("Filtre", selection: $selectedFilter) {
-                Text("Tous (\(grocery.items.count))").tag(GroceryFilter.all)
-                Text("À acheter (\(grocery.uncompletedCount))").tag(GroceryFilter.pending)
-                Text("Achetés (\(grocery.completedCount))").tag(GroceryFilter.completed)
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-            
-            // Catégories rapides
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Button {
-                        withAnimation { selectedCategory = nil }
-                    } label: {
-                        Text("Toutes catégories")
-                            .font(.caption2)
-                            .bold()
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(selectedCategory == nil ? Color.cyan : Color(UIColor.secondarySystemBackground))
-                            .foregroundColor(selectedCategory == nil ? .white : .primary)
-                            .cornerRadius(12)
-                    }
-                    
-                    ForEach(FoodCategory.allCases, id: \.self) { cat in
-                        Button {
-                            withAnimation {
-                                selectedCategory = (selectedCategory == cat ? nil : cat)
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: cat.iconName)
-                                Text(cat.rawValue)
-                            }
-                            .font(.caption2)
-                            .bold()
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(selectedCategory == cat ? cat.color : Color(UIColor.secondarySystemBackground))
-                            .foregroundColor(selectedCategory == cat ? .white : .primary)
-                            .cornerRadius(12)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-            }
+            filterPickerView
+            categoryFilterScrollView
             
             Divider()
             
-            // Liste des articles
-            if grocery.items.isEmpty {
-                VStack(spacing: 12) {
-                    Spacer()
-                    Image(systemName: "cart.badge.plus")
-                        .font(.system(size: 48))
-                        .foregroundColor(.cyan)
-                    Text("Votre liste d'épicerie est vide")
-                        .font(.headline)
-                    Text("Ajoutez des articles ci-dessus ou importez les ingrédients manquants depuis l'onglet Recettes Anti-Gaspi.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                    Spacer()
+            groceryBodyView
+        }
+    }
+    
+    private var syncBannerView: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "icloud.fill")
+                .foregroundColor(.cyan)
+                .font(.subheadline)
+            
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text("iCloud Partage Familial")
+                        .font(.caption2)
+                        .bold()
+                    Text("• En direct")
+                        .font(.caption2)
+                        .foregroundColor(.green)
                 }
-            } else if filteredItems.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .font(.system(size: 36))
-                        .foregroundColor(.secondary)
-                    Text("Aucun article correspondant à ce filtre")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
+                Text(grocery.syncStatusMessage)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            if grocery.isSyncing {
+                ProgressView()
+                    .scaleEffect(0.7)
             } else {
-                List {
-                    if !pendingItems.isEmpty {
-                        Section(header: Text("🛒 À ACHETER (\(pendingItems.count))")) {
-                            ForEach(pendingItems) { item in
-                                GroceryItemRow(item: item, onTransfer: {
-                                    itemToTransfer = item
-                                    showTransferSheet = true
-                                })
-                            }
-                            .onDelete { offsets in
-                                grocery.deleteItems(at: offsets, in: pendingItems)
-                            }
-                        }
-                    }
-                    
-                    if !completedItems.isEmpty {
-                        Section(header: HStack {
-                            Text("✅ DÉJÀ ACHETÉS (\(completedItems.count))")
-                            Spacer()
-                            Button("Vider") {
-                                showClearCompletedAlert = true
-                            }
-                            .font(.caption2)
-                            .textCase(nil)
-                        }) {
-                            ForEach(completedItems) { item in
-                                GroceryItemRow(item: item, onTransfer: {
-                                    itemToTransfer = item
-                                    showTransferSheet = true
-                                })
-                            }
-                            .onDelete { offsets in
-                                grocery.deleteItems(at: offsets, in: completedItems)
-                            }
-                        }
-                    }
+                Button {
+                    grocery.forceSync()
+                } label: {
+                    Text("Synchro")
+                        .font(.caption2)
+                        .bold()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.cyan.opacity(0.15))
+                        .foregroundColor(.cyan)
+                        .cornerRadius(6)
                 }
-                .listStyle(.insetGrouped)
             }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color(UIColor.secondarySystemBackground))
+    }
+    
+    private var filterPickerView: some View {
+        Picker("Filtre", selection: $selectedFilter) {
+            Text("Tous (\(grocery.items.count))").tag(GroceryFilter.all)
+            Text("À acheter (\(grocery.uncompletedCount))").tag(GroceryFilter.pending)
+            Text("Achetés (\(grocery.completedCount))").tag(GroceryFilter.completed)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+    }
+    
+    private var categoryFilterScrollView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation { selectedCategory = nil }
+                } label: {
+                    Text("Toutes catégories")
+                        .font(.caption2)
+                        .bold()
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(selectedCategory == nil ? Color.cyan : Color(UIColor.secondarySystemBackground))
+                        .foregroundColor(selectedCategory == nil ? .white : .primary)
+                        .cornerRadius(12)
+                }
+                
+                ForEach(FoodCategory.allCases, id: \.self) { (cat: FoodCategory) in
+                    Button {
+                        withAnimation {
+                            selectedCategory = (selectedCategory == cat ? nil : cat)
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: cat.iconName)
+                            Text(cat.rawValue)
+                        }
+                        .font(.caption2)
+                        .bold()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(selectedCategory == cat ? cat.color : Color(UIColor.secondarySystemBackground))
+                        .foregroundColor(selectedCategory == cat ? .white : .primary)
+                        .cornerRadius(12)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+        }
+    }
+    
+    @ViewBuilder
+    private var groceryBodyView: some View {
+        if grocery.items.isEmpty {
+            emptyStatePlaceholderView
+        } else if filteredItems.isEmpty {
+            noFilterResultsPlaceholderView
+        } else {
+            itemsListGroupView
+        }
+    }
+    
+    private var emptyStatePlaceholderView: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "cart.badge.plus")
+                .font(.system(size: 48))
+                .foregroundColor(.cyan)
+            Text("Votre liste d'épicerie est vide")
+                .font(.headline)
+            Text("Ajoutez des articles ci-dessus ou importez les ingrédients manquants depuis l'onglet Recettes Anti-Gaspi.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Spacer()
+        }
+    }
+    
+    private var noFilterResultsPlaceholderView: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 36))
+                .foregroundColor(.secondary)
+            Text("Aucun article correspondant à ce filtre")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+    
+    private var itemsListGroupView: some View {
+        List {
+            if !pendingItems.isEmpty {
+                Section(header: Text("🛒 À ACHETER (\(pendingItems.count))")) {
+                    ForEach(pendingItems) { item in
+                        GroceryItemRow(item: item, onTransfer: {
+                            itemToTransfer = item
+                            showTransferSheet = true
+                        })
+                    }
+                    .onDelete { offsets in
+                        grocery.deleteItems(at: offsets, in: pendingItems)
+                    }
+                }
+            }
+            
+            if !completedItems.isEmpty {
+                Section(header: HStack {
+                    Text("✅ DÉJÀ ACHETÉS (\(completedItems.count))")
+                    Spacer()
+                    Button("Vider") {
+                        showClearCompletedAlert = true
+                    }
+                    .font(.caption2)
+                    .textCase(nil)
+                }) {
+                    ForEach(completedItems) { item in
+                        GroceryItemRow(item: item, onTransfer: {
+                            itemToTransfer = item
+                            showTransferSheet = true
+                        })
+                    }
+                    .onDelete { offsets in
+                        grocery.deleteItems(at: offsets, in: completedItems)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
     }
 }
 
