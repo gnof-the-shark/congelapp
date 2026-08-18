@@ -213,11 +213,24 @@ final class FrenchCulinaryTranslator {
         ("framboise", "raspberry"),
         ("framboises", "raspberry"),
         ("chocolat", "chocolate"),
-        ("citron", "lemon")
+        ("citron", "lemon"),
+        ("yogourt", "yogurt"),
+        ("yogurt", "yogurt"),
+        ("yaourt", "yogurt"),
+        ("skyr", "yogurt"),
+        ("fromage blanc", "yogurt"),
+        ("glace", "ice cream"),
+        ("creme glacee", "ice cream"),
+        ("crème glacée", "ice cream"),
+        ("sorbet", "ice cream")
     ]
     
     // Dictionnaire de traduction Anglais -> Français des ingrédients
     private let englishToFrenchIngredients: [String: String] = [
+        "yogurt": "Yaourt / Yogourt",
+        "greek yogurt": "Yaourt grec",
+        "ice cream": "Glace / Crème glacée",
+        "vanilla ice cream": "Glace à la vanille",
         "chicken": "Poulet",
         "chicken breast": "Blanc de poulet",
         "chicken breasts": "Blancs de poulet",
@@ -726,7 +739,7 @@ final class TheMealDBService {
     }
 }
 
-// MARK: - Moteur Culinaire Local de Secours (100% Hors-Ligne)
+// MARK: - Moteur Culinaire Local de Secours (100% Hors-Ligne & Conscient des Ingrédients)
 
 typealias RecipeEngine = LocalRecipeEngine
 
@@ -736,12 +749,13 @@ struct LocalRecipeEngine {
         
         let sortedItems = items.sorted { $0.daysUntilExpiry < $1.daysUntilExpiry }
         
-        var availableMeat = sortedItems.filter { $0.category == .meat }
-        var availableFish = sortedItems.filter { $0.category == .fish }
-        var availableVeg = sortedItems.filter { $0.category == .vegetables }
-        var availableDairy = sortedItems.filter { $0.category == .dairy }
-        var availableFruits = sortedItems.filter { $0.category == .fruits }
-        var availableOther = sortedItems.filter { $0.category == .other }
+        var availableMeat = sortedItems.filter { isMeatLike($0) }
+        var availableFish = sortedItems.filter { isFishLike($0) }
+        var availableVeg = sortedItems.filter { isVegetableLike($0) }
+        var availableDairy = sortedItems.filter { isDairyLike($0) }
+        var availableFruits = sortedItems.filter { isFruitLike($0) }
+        var availableBread = sortedItems.filter { isBreadLike($0) }
+        var availablePastaRice = sortedItems.filter { isPastaOrRiceLike($0) }
         
         if isVeggieOnly {
             availableMeat = []
@@ -750,166 +764,394 @@ struct LocalRecipeEngine {
         
         var results: [AntiWasteRecipe] = []
         
-        // 1. Gratin Doré du Congélateur
-        if let veg = availableVeg.first {
-            let protein = isVeggieOnly ? nil : (availableMeat.first ?? availableFish.first)
-            var matched = [veg.name]
-            if let prot = protein { matched.append(prot.name) }
-            if let dairy = availableDairy.first { matched.append(dairy.name) }
+        // --- 1. SPÉCIALITÉ YOGOURT / YAOURT / SKYR / FROMAGE BLANC ---
+        if let yogurtItem = sortedItems.first(where: { isYogurtLike($0) }) {
+            let fruitComp = availableFruits.first
+            var matchedYogurt = [yogurtItem.name]
+            if let f = fruitComp { matchedYogurt.append(f.name) }
             
+            // Gâteau Moelleux au Yaourt Familial (Pas de poêle !)
             results.append(AntiWasteRecipe(
-                title: protein != nil ? "Gratin Doré au \(veg.name) & \(protein!.name)" : "Gratin Fondant de \(veg.name)",
-                emoji: "🧀",
-                category: "Plat au Four",
-                prepTimeMinutes: 15,
-                cookTimeMinutes: 25,
-                servings: 4,
-                difficulty: "Facile",
-                matchedInventoryItemNames: matched,
-                pantryStaples: ["Crème fraîche ou lait (20 cl)", "Fromage râpé (100g)", "1 gousse d'ail", "Sel, poivre & muscade", "Huile d'olive"],
-                steps: [
-                    "Préchauffez votre four à 200°C (thermostat 6-7).",
-                    "Plongez \(veg.name) encore congelé dans de l'eau bouillante salée pendant 4 minutes, puis égouttez soigneusement.",
-                    protein != nil ? "Coupez \(protein!.name) en dés et faites-les dorer 3 minutes à la poêle avec un filet d'huile d'olive." : "Frottez un plat à gratin avec la gousse d'ail coupée en deux.",
-                    "Disposez les ingrédients dans le plat à gratin, nappez avec la crème assaisonnée de muscade, sel et poivre.",
-                    "Saupoudrez généreusement de fromage râpé et enfournez 20 à 25 minutes jusqu'à obtenir une belle croûte dorée."
-                ],
-                chefTip: "Pour un gratin encore plus croustillant, ajoutez quelques miettes de pain rassis ou chapelure sur le dessus."
-            ))
-        }
-        
-        // 2. Poêlée Rustique Express
-        let mainIngredient = isVeggieOnly ? availableVeg.first : (availableMeat.first ?? availableFish.first ?? availableVeg.first)
-        if let main = mainIngredient {
-            let companion = availableVeg.first(where: { $0.id != main.id }) ?? availableOther.first
-            var matched = [main.name]
-            if let comp = companion { matched.append(comp.name) }
-            
-            results.append(AntiWasteRecipe(
-                title: "Poêlée Rustique Express au \(main.name)",
-                emoji: "🍳",
-                category: "Poêlée Rapide",
+                title: "Gâteau Moelleux Familial au \(yogurtItem.name)",
+                emoji: "🍰",
+                category: "Pâtisserie & Dessert",
                 prepTimeMinutes: 10,
-                cookTimeMinutes: 15,
-                servings: 2,
+                cookTimeMinutes: 35,
+                servings: 6,
                 difficulty: "Très facile",
-                matchedInventoryItemNames: matched,
-                pantryStaples: ["2 c. à soupe d'huile d'olive", "1 oignon émincé", "Herbes de Provence", "Sel et poivre du moulin", "Un filet de jus de citron ou sauce soja"],
+                matchedInventoryItemNames: [yogurtItem.name],
+                pantryStaples: ["3 œufs entiers", "2 pots de sucre", "3 pots de farine", "1/2 pot d'huile végétale", "1 sachet de levure chimique", "1 sachet de sucre vanillé"],
                 steps: [
-                    "Chauffez l'huile d'olive dans une grande poêle ou un wok à feu vif.",
-                    "Faites suer l'oignon émincé jusqu'à ce qu'il devienne translucide.",
-                    "Ajoutez directement \(main.name) sans décongélation préalable si les morceaux sont fins.",
-                    companion != nil ? "Incorporez \(companion!.name) et faites sauter l'ensemble pendant 8 à 10 minutes en remuant régulièrement." : "Faites sauter pendant 8 à 10 minutes en remuant régulièrement.",
-                    "Assaisonnez avec les herbes de Provence, le sel, le poivre et terminez avec un filet de jus de citron."
+                    "Préchauffez votre four à 180°C (thermostat 6) et beurrez un moule à manqué.",
+                    "Videz le \(yogurtItem.name) dans un grand saladier (le pot servira d'unité de mesure).",
+                    "Ajoutez les 3 œufs et les 2 pots de sucre, puis fouettez vigoureusement jusqu'à ce que le mélange blanchisse.",
+                    "Incorporez progressivement les 3 pots de farine et le sachet de levure chimique en mélangeant avec une spatule.",
+                    "Versez le 1/2 pot d'huile et le sucre vanillé pour obtenir une pâte lisse et homogène.",
+                    "Versez dans le moule et enfournez pendant 30 à 35 minutes jusqu'à ce que la pointe d'un couteau ressorte sèche."
                 ],
-                chefTip: "La cuisson vive sans couvrir permet d'évaporer l'eau de congélation et de dorer parfaitement les aliments."
+                chefTip: "Le grand classique anti-gaspillage : inratable, moelleux et idéal pour écouler tous types de yaourts ou skyr !"
             ))
-        }
-        
-        // 3. Wok Asiatique Épicé
-        if let protein = isVeggieOnly ? nil : (availableMeat.first ?? availableFish.first) {
-            let veg = availableVeg.first
-            var matched = [protein.name]
-            if let v = veg { matched.append(v.name) }
             
+            // Parfait & Bol Fraîcheur au Yaourt & Miel
             results.append(AntiWasteRecipe(
-                title: "Wok Asiatique au \(protein.name)",
-                emoji: "🥢",
-                category: "Wok & Sauté",
-                prepTimeMinutes: 12,
-                cookTimeMinutes: 12,
-                servings: 3,
-                difficulty: "Facile",
-                matchedInventoryItemNames: matched,
-                pantryStaples: ["Riz cuit ou nouilles (250g)", "3 c. à soupe de sauce soja", "1 c. à café d'huile de sésame", "1 gousse d'ail écrasée", "1 œuf battu"],
-                steps: [
-                    "Découpez \(protein.name) en fines lamelles.",
-                    "Faites chauffer un filet d'huile dans un wok à feu très vif.",
-                    "Faites dorer avec l'ail pendant 3 minutes.",
-                    veg != nil ? "Ajoutez \(veg!.name) et poursuivez la cuisson 4 minutes." : "Baissez le feu.",
-                    "Versez l'œuf battu pour le brouiller rapidement, puis mélangez avec le riz et la sauce soja."
-                ],
-                chefTip: "Le riz de la veille légèrement sec est parfait pour cette recette anti-gaspi !"
-            ))
-        }
-        
-        // 4. Velouté Réconfortant
-        if availableVeg.count >= 1 {
-            let veg1 = availableVeg[0]
-            let veg2 = availableVeg.count > 1 ? availableVeg[1] : nil
-            var matched = [veg1.name]
-            if let v2 = veg2 { matched.append(v2.name) }
-            
-            results.append(AntiWasteRecipe(
-                title: "Velouté Réconfortant de \(veg1.name)" + (veg2 != nil ? " & \(veg2!.name)" : ""),
-                emoji: "🥣",
-                category: "Soupe & Velouté",
-                prepTimeMinutes: 10,
-                cookTimeMinutes: 20,
-                servings: 4,
-                difficulty: "Très facile",
-                matchedInventoryItemNames: matched,
-                pantryStaples: ["1 cube de bouillon de légumes", "600 ml d'eau", "2 c. à soupe de crème fraîche", "1 noisette de beurre", "Sel & poivre"],
-                steps: [
-                    "Dans une casserole, faites fondre le beurre et faites revenir les légumes \(matched.joined(separator: " et ")) pendant 3 minutes.",
-                    "Ajoutez l'eau chaude et émiettez le cube de bouillon.",
-                    "Portez à ébullition, couvrez et laissez mijoter à feu moyen pendant 15 minutes.",
-                    "Mixez finement à l'aide d'un mixeur plongeant jusqu'à consistance lisse et soyeuse.",
-                    "Incorporez la crème fraîche, rectifiez l'assaisonnement et servez bien chaud."
-                ],
-                chefTip: "Parfait pour utiliser les fins de sachets de légumes qui traînent au fond du bac !"
-            ))
-        }
-        
-        // 5. Tarte Rustique
-        if let item = sortedItems.first {
-            var matched = [item.name]
-            if let second = sortedItems.first(where: { $0.id != item.id }) {
-                matched.append(second.name)
-            }
-            
-            results.append(AntiWasteRecipe(
-                title: "Tarte Rustique Feuilletée aux Délices de \(item.name)",
-                emoji: "🥧",
-                category: "Tarte & Quiche",
-                prepTimeMinutes: 15,
-                cookTimeMinutes: 30,
-                servings: 4,
-                difficulty: "Facile",
-                matchedInventoryItemNames: matched,
-                pantryStaples: ["1 pâte feuilletée", "3 œufs entiers", "20 cl de crème liquide", "100g de fromage râpé", "Sel, poivre & muscade"],
-                steps: [
-                    "Préchauffez votre four à 180°C et déroulez la pâte dans un moule à tarte.",
-                    "Faites revenir rapidement les ingrédients \(matched.joined(separator: " et ")) à la poêle.",
-                    "Dans un bol, fouettez les œufs avec la crème, le sel et le poivre.",
-                    "Disposez les ingrédients sur le fond de tarte et versez l'appareil par-dessus.",
-                    "Parsemez de fromage râpé et enfournez pour 30 minutes jusqu'à ce que la tarte soit dorée."
-                ],
-                chefTip: "Piquez le fond de tarte à la fourchette avant de garnir pour une cuisson croustillante."
-            ))
-        }
-        
-        // 6. Smoothie Fruité
-        if let fruits = availableFruits.first {
-            results.append(AntiWasteRecipe(
-                title: "Smoothie Bowl Vitaminé aux \(fruits.name)",
+                title: fruitComp != nil ? "Parfait Fraîcheur au \(yogurtItem.name) & \(fruitComp!.name)" : "Bol Douceur au \(yogurtItem.name), Miel & Granola",
                 emoji: "🍧",
-                category: "Dessert & Goûter",
+                category: "Petit-Déjeuner & Dessert",
                 prepTimeMinutes: 5,
                 cookTimeMinutes: 0,
                 servings: 2,
                 difficulty: "Ultra Rapide",
-                matchedInventoryItemNames: [fruits.name],
-                pantryStaples: ["1 yaourt nature (150g)", "1 banane ou 10 cl de lait", "1 c. à soupe de miel", "Flocons d'avoine"],
+                matchedInventoryItemNames: matchedYogurt,
+                pantryStaples: ["2 c. à soupe de miel ou sirop d'érable", "4 c. à soupe de flocons d'avoine ou granola", "Une pincée de cannelle", "Quelques amandes ou noix"],
                 steps: [
-                    "Placez les \(fruits.name) congelés directement dans le bol d'un blender.",
-                    "Ajoutez le yaourt, la banane et le miel.",
-                    "Mixez à haute vitesse pendant 45 secondes jusqu'à texture onctueuse.",
-                    "Versez dans des bols et décorez avec des graines ou du granola."
+                    "Déposez généreusement le \(yogurtItem.name) bien frais dans deux jolis bols ou verrines.",
+                    fruitComp != nil ? "Ajoutez les \(fruitComp!.name) décongelés ou mixés en coulis par-dessus." : "Nappez d'un filet de miel doré.",
+                    "Saupoudrez de flocons d'avoine croustillants et d'une pincée de cannelle.",
+                    "Dégustez immédiatement à la cuillère pour un petit-déjeuner ou goûter sain et onctueux."
                 ],
-                chefTip: "Les fruits surgelés donnent une texture glacée parfaite sans avoir besoin de glaçons !"
+                chefTip: "Aucune cuisson nécessaire : préserve toute la fraîcheur et les ferments lactiques du produit."
+            ))
+            
+            // Sauce Fraîcheur Méditerranéenne façon Tzatziki
+            results.append(AntiWasteRecipe(
+                title: "Sauce Fraîcheur au \(yogurtItem.name), Ail & Fines Herbes",
+                emoji: "🥗",
+                category: "Sauce & Tartinade",
+                prepTimeMinutes: 8,
+                cookTimeMinutes: 0,
+                servings: 4,
+                difficulty: "Facile",
+                matchedInventoryItemNames: [yogurtItem.name],
+                pantryStaples: ["1 gousse d'ail pressée", "1 c. à soupe d'huile d'olive", "Jus de 1/2 citron", "Sel fin et poivre blanc", "Menthe, aneth ou ciboulette fraîche"],
+                steps: [
+                    "Versez le \(yogurtItem.name) dans un bol.",
+                    "Ajoutez l'ail pressé, le jus de citron et l'huile d'olive.",
+                    "Ciselez finement les herbes et incorporez-les en mélangeant délicatement.",
+                    "Salez, poivrez et réservez 15 minutes au réfrigérateur avant de servir avec du pain grillé ou des crudités."
+                ],
+                chefTip: "Parfait pour tremper des légumes croquants ou accompagner une grillade estivale."
             ))
         }
+        
+        // --- 2. SPÉCIALITÉ GLACE / CRÈME GLACÉE / SORBET ---
+        if let iceCreamItem = sortedItems.first(where: { isIceCreamLike($0) }) {
+            let fruitComp = availableFruits.first
+            var matched = [iceCreamItem.name]
+            if let f = fruitComp { matched.append(f.name) }
+            
+            results.append(AntiWasteRecipe(
+                title: "Coupe Gourmande Glacée au \(iceCreamItem.name) & Coulis Maison",
+                emoji: "🍨",
+                category: "Dessert Glacé",
+                prepTimeMinutes: 5,
+                cookTimeMinutes: 2,
+                servings: 2,
+                difficulty: "Très facile",
+                matchedInventoryItemNames: matched,
+                pantryStaples: ["50g de chocolat noir ou 2 c. à soupe de miel", "Amandes effilées ou biscuits émiettés", "2 c. à soupe de lait"],
+                steps: [
+                    "Sortez le \(iceCreamItem.name) 5 minutes avant pour faciliter le pochage.",
+                    "Dans une petite coupelle, faites fondre le chocolat avec le lait 30 secondes au micro-ondes.",
+                    fruitComp != nil ? "Faites tiédir les \(fruitComp!.name) avec une cuillère de sucre pour former un coulis minute." : "Formez 2 belles boules de glace par coupe.",
+                    "Nappez du coulis chaud sur la glace froide et parsemez d'amandes effilées."
+                ],
+                chefTip: "Le contraste thermique chaud-froid sublime la dégustation !"
+            ))
+        }
+        
+        // --- 3. SPÉCIALITÉ PAIN / BRIOCHE ---
+        if let breadItem = sortedItems.first(where: { isBreadLike($0) }) {
+            results.append(AntiWasteRecipe(
+                title: "Pain Perdu Doré Moelleux au \(breadItem.name)",
+                emoji: "🍞",
+                category: "Dessert & Goûter",
+                prepTimeMinutes: 5,
+                cookTimeMinutes: 6,
+                servings: 3,
+                difficulty: "Très facile",
+                matchedInventoryItemNames: [breadItem.name],
+                pantryStaples: ["2 œufs entiers", "20 cl de lait", "40g de sucre roux", "20g de beurre", "1 pincée de cannelle"],
+                steps: [
+                    "Dans une assiette creuse, battez les 2 œufs avec le lait, le sucre et la cannelle.",
+                    "Coupez le \(breadItem.name) en tranches épaisses et trempez-les des deux côtés pour bien les imbiber.",
+                    "Faites fondre le beurre dans une poêle chaude à feu moyen.",
+                    "Déposez les tranches et faites-les dorer 2 à 3 minutes de chaque côté jusqu'à belle coloration dorée.",
+                    "Servez chaud saupoudré d'un voile de sucre glace ou de sirop d'érable."
+                ],
+                chefTip: "La reine des recettes anti-gaspillage pour redonner une texture ultra-moelleuse au pain décongelé."
+            ))
+        }
+        
+        // --- 4. SPÉCIALITÉ FROMAGE DÉCONGELÉ ---
+        if let cheeseItem = sortedItems.first(where: { isCheeseLike($0) }) {
+            let breadComp = availableBread.first
+            var matched = [cheeseItem.name]
+            if let b = breadComp { matched.append(b.name) }
+            
+            results.append(AntiWasteRecipe(
+                title: "Croque-Monsieur Croustillant au \(cheeseItem.name) Fondu",
+                emoji: "🥪",
+                category: "Snack Chaud",
+                prepTimeMinutes: 10,
+                cookTimeMinutes: 10,
+                servings: 2,
+                difficulty: "Facile",
+                matchedInventoryItemNames: matched,
+                pantryStaples: ["4 tranches de pain de mie ou pain", "2 tranches de jambon (optionnel)", "20g de beurre", "1 c. à soupe de crème fraîche", "Poivre"],
+                steps: [
+                    "Tartinez légèrement les tranches de pain avec une fine couche de beurre et de crème.",
+                    "Déposez de généreuses tranches ou copeaux de \(cheeseItem.name) à l'intérieur.",
+                    "Refermez les sandwiches et déposez encore un peu de \(cheeseItem.name) râpé sur le dessus.",
+                    "Enfournez à 200°C pendant 10 minutes ou faites dorer dans une poêle avec une noisette de beurre jusqu'à ce que le fromage soit bien filant."
+                ],
+                chefTip: "Le fromage décongelé fond encore plus rapidement et libère toutes ses saveurs."
+            ))
+        }
+        
+        // --- 5. SPÉCIALITÉ FRUITS SURGELÉS ---
+        if let fruitItem = availableFruits.first {
+            results.append(AntiWasteRecipe(
+                title: "Crumble Croustillant Doré aux \(fruitItem.name)",
+                emoji: "🥧",
+                category: "Dessert au Four",
+                prepTimeMinutes: 12,
+                cookTimeMinutes: 25,
+                servings: 4,
+                difficulty: "Facile",
+                matchedInventoryItemNames: [fruitItem.name],
+                pantryStaples: ["100g de farine", "80g de beurre froid en dés", "80g de sucre roux", "1 sachet de sucre vanillé", "1 pincée de cannelle"],
+                steps: [
+                    "Préchauffez votre four à 180°C (th. 6).",
+                    "Disposez directement les \(fruitItem.name) surgelés dans un plat à gratin et saupoudrez d'un peu de sucre.",
+                    "Dans un saladier, mélangez la farine, le sucre roux, la vanille et le beurre froid coupé en petits dés.",
+                    "Sablez du bout des doigts pour obtenir une texture grumeleuse et friable.",
+                    "Répartissez le crumble sur les fruits sans tasser.",
+                    "Enfournez 25 à 30 minutes jusqu'à ce que la croûte soit bien dorée et que le jus des fruits bouillonne sur les côtés."
+                ],
+                chefTip: "Servez tiède avec une boule de glace vanille pour un délice irrésistible."
+            ))
+        }
+        
+        // --- 6. SPÉCIALITÉ POISSON & FRUITS DE MER ---
+        if let fishItem = isVeggieOnly ? nil : availableFish.first {
+            let vegComp = availableVeg.first
+            var matched = [fishItem.name]
+            if let v = vegComp { matched.append(v.name) }
+            
+            results.append(AntiWasteRecipe(
+                title: "Papillote Délicate de \(fishItem.name) aux Agrumes & Fines Herbes",
+                emoji: "🐟",
+                category: "Poisson au Four",
+                prepTimeMinutes: 10,
+                cookTimeMinutes: 18,
+                servings: 2,
+                difficulty: "Facile",
+                matchedInventoryItemNames: matched,
+                pantryStaples: ["1 citron jaune ou vert en rondelles", "2 c. à soupe d'huile d'olive", "Thym ou aneth frais", "Sel fin et poivre du moulin"],
+                steps: [
+                    "Préchauffez votre four à 190°C.",
+                    "Découpez de grandes feuilles de papier cuisson ou d'aluminium.",
+                    "Déposez le \(fishItem.name) au centre de chaque feuille.",
+                    vegComp != nil ? "Ajoutez quelques rondelles de \(vegComp!.name) autour du poisson." : "Arrosez d'un filet d'huile d'olive et de jus de citron.",
+                    "Déposez 2 rondelles de citron sur le poisson, saupoudrez d'herbes aromatiques, de sel et de poivre.",
+                    "Fermez hermétiquement la papillote en repliant les bords et enfournez pendant 15 à 18 minutes."
+                ],
+                chefTip: "La cuisson en papillote préserve la chair délicate du poisson surgelé sans jamais l'assécher."
+            ))
+        }
+        
+        // --- 7. SPÉCIALITÉ VIANDES & VOLAILLES ---
+        if let meatItem = isVeggieOnly ? nil : availableMeat.first {
+            let vegComp = availableVeg.first
+            var matched = [meatItem.name]
+            if let v = vegComp { matched.append(v.name) }
+            
+            results.append(AntiWasteRecipe(
+                title: "Poêlée Rustique Savoureuse au \(meatItem.name)",
+                emoji: "🥩",
+                category: "Poêlée & Sauté",
+                prepTimeMinutes: 10,
+                cookTimeMinutes: 15,
+                servings: 2,
+                difficulty: "Facile",
+                matchedInventoryItemNames: matched,
+                pantryStaples: ["2 c. à soupe d'huile d'olive ou beurre", "1 oignon émincé", "1 gousse d'ail", "Herbes de Provence", "Sel et poivre"],
+                steps: [
+                    "Faites chauffer l'huile dans une poêle à feu moyen-vif.",
+                    "Faites suer l'oignon émincé et la gousse d'ail écrasée pendant 2 minutes.",
+                    "Ajoutez le \(meatItem.name) découpé en morceaux et faites-le dorer sur toutes ses faces.",
+                    vegComp != nil ? "Incorporez les \(vegComp!.name) et poursuivez la cuisson 8 minutes en remuant." : "Baissez à feu moyen et laissez cuire à cœur 6 à 8 minutes.",
+                    "Assaisonnez avec les herbes de Provence, le sel et le poivre avant de dresser bien chaud."
+                ],
+                chefTip: "Pour les viandes épaisses, prévoyez une décongélation lente au frigo pour garder toute la tendreté."
+            ))
+        }
+        
+        // --- 8. SPÉCIALITÉ LÉGUMES SURGELÉS (Gratin ou Velouté) ---
+        if let vegItem = availableVeg.first {
+            let secondVeg = availableVeg.first(where: { $0.id != vegItem.id })
+            var matched = [vegItem.name]
+            if let v2 = secondVeg { matched.append(v2.name) }
+            
+            // Gratin Fondant
+            results.append(AntiWasteRecipe(
+                title: "Gratin Fondant Doré de \(vegItem.name)",
+                emoji: "🧀",
+                category: "Gratin au Four",
+                prepTimeMinutes: 12,
+                cookTimeMinutes: 25,
+                servings: 4,
+                difficulty: "Facile",
+                matchedInventoryItemNames: matched,
+                pantryStaples: ["20 cl de crème fraîche", "100g de fromage râpé (gruyère ou mozzarella)", "1 gousse d'ail", "1 pincée de muscade", "Sel et poivre"],
+                steps: [
+                    "Préchauffez votre four à 200°C.",
+                    "Plongez les \(vegItem.name) surgelés dans une casserole d'eau bouillante salée pendant 4 minutes, puis égouttez soigneusement.",
+                    "Frottez le fond d'un plat à gratin avec la gousse d'ail coupée en deux.",
+                    "Disposez les légumes dans le plat, nappez de crème assaisonnée de muscade, sel et poivre.",
+                    "Recouvrez généreusement de fromage râpé et enfournez pour 20 à 25 minutes jusqu'à belle croûte gratinée."
+                ],
+                chefTip: "Bien égoutter les légumes surgelés permet d'éviter de détremper le gratin."
+            ))
+            
+            // Velouté Réconfortant
+            results.append(AntiWasteRecipe(
+                title: "Velouté Onctueux Réconfortant de \(vegItem.name)",
+                emoji: "🥣",
+                category: "Soupe & Velouté",
+                prepTimeMinutes: 8,
+                cookTimeMinutes: 18,
+                servings: 4,
+                difficulty: "Très facile",
+                matchedInventoryItemNames: matched,
+                pantryStaples: ["1 cube de bouillon de légumes", "600 ml d'eau chaude", "2 c. à soupe de crème fraîche", "1 noisette de beurre", "Sel & poivre"],
+                steps: [
+                    "Dans une casserole, faites fondre la noisette de beurre et faites suer les \(vegItem.name) pendant 3 minutes.",
+                    "Versez l'eau chaude et émiettez le cube de bouillon.",
+                    "Portez à ébullition, couvrez et laissez mijoter à feu moyen pendant 15 minutes.",
+                    "Mixez finement au mixeur plongeant jusqu'à obtenir une texture soyeuse et veloutée.",
+                    "Incorporez la crème fraîche, assaisonnez à votre convenance et servez bien chaud avec des croûtons."
+                ],
+                chefTip: "Une excellente façon de valoriser les fonds de sachets de légumes du congélateur !"
+            ))
+        }
+        
+        // --- 9. SPÉCIALITÉ PÂTES / RIZ / FÉCULENTS ---
+        if let starchItem = availablePastaRice.first {
+            results.append(AntiWasteRecipe(
+                title: "Riz ou Pâtes Sautées Express au \(starchItem.name)",
+                emoji: "🥢",
+                category: "Wok & Poêlée",
+                prepTimeMinutes: 8,
+                cookTimeMinutes: 10,
+                servings: 2,
+                difficulty: "Très facile",
+                matchedInventoryItemNames: [starchItem.name],
+                pantryStaples: ["2 c. à soupe de sauce soja ou huile d'olive", "1 œuf battu", "1 gousse d'ail émincée", "1 oignon nouveau ou persil"],
+                steps: [
+                    "Faites chauffer une cuillère d'huile dans un wok ou une poêle à feu vif.",
+                    "Ajoutez l'ail et faites revenir 1 minute.",
+                    "Versez le \(starchItem.name) et faites sauter vivement pendant 5 minutes en remuant.",
+                    "Poussez les féculents sur le côté, versez l'œuf battu pour le brouiller rapidement, puis mélangez le tout.",
+                    "Arrosez de sauce soja et parsemez d'herbes fraîches avant de servir."
+                ],
+                chefTip: "Le plat minute idéal pour recycler les restes de féculents congelés."
+            ))
+        }
+        
+        if let maxT = maxTimeMinutes {
+            results = results.filter { ($0.prepTimeMinutes + $0.cookTimeMinutes) <= maxT }
+        }
+        
+        return results
+    }
+    
+    // MARK: - Détection Intelligente de la Nature Culinaire des Aliments
+    
+    private static func isYogurtLike(_ item: FoodItem) -> Bool {
+        let n = item.name.lowercased()
+        return n.contains("yaourt") || n.contains("yogourt") || n.contains("yogurt") ||
+               n.contains("skyr") || n.contains("fromage blanc") || n.contains("petit suisse") ||
+               n.contains("faisselle") || n.contains("yoghurt")
+    }
+    
+    private static func isIceCreamLike(_ item: FoodItem) -> Bool {
+        let n = item.name.lowercased()
+        return n.contains("glace") || n.contains("sorbet") || n.contains("ice cream") ||
+               n.contains("creme glacee") || n.contains("crème glacée") || n.contains("eskimo") ||
+               n.contains("magnum") || n.contains("cornet")
+    }
+    
+    private static func isCheeseLike(_ item: FoodItem) -> Bool {
+        if isYogurtLike(item) { return false }
+        let n = item.name.lowercased()
+        return n.contains("fromage") || n.contains("cheese") || n.contains("mozzarella") ||
+               n.contains("parmesan") || n.contains("cheddar") || n.contains("gruyère") ||
+               n.contains("gruyere") || n.contains("raclette") || n.contains("comté") ||
+               n.contains("comte") || n.contains("chèvre") || n.contains("chevre") ||
+               n.contains("gouda") || n.contains("camembert") || n.contains("emmental")
+    }
+    
+    private static func isFruitLike(_ item: FoodItem) -> Bool {
+        if item.category == .fruits { return true }
+        let n = item.name.lowercased()
+        return n.contains("fraise") || n.contains("framboise") || n.contains("myrtille") ||
+               n.contains("pomme") || n.contains("poire") || n.contains("mangue") ||
+               n.contains("ananas") || n.contains("mûre") || n.contains("cerise") ||
+               n.contains("banane") || n.contains("fruit") || n.contains("baie")
+    }
+    
+    private static func isMeatLike(_ item: FoodItem) -> Bool {
+        if item.category == .meat { return true }
+        let n = item.name.lowercased()
+        return n.contains("poulet") || n.contains("boeuf") || n.contains("bœuf") ||
+               n.contains("steak") || n.contains("porc") || n.contains("jambon") ||
+               n.contains("dinde") || n.contains("canard") || n.contains("lardon") ||
+               n.contains("bacon") || n.contains("viande") || n.contains("saucisse") ||
+               n.contains("haché") || n.contains("hache") || n.contains("agneau") ||
+               n.contains("veau")
+    }
+    
+    private static func isFishLike(_ item: FoodItem) -> Bool {
+        if item.category == .fish { return true }
+        let n = item.name.lowercased()
+        return n.contains("saumon") || n.contains("poisson") || n.contains("cabillaud") ||
+               n.contains("morue") || n.contains("thon") || n.contains("crevette") ||
+               n.contains("gambas") || n.contains("moule") || n.contains("colin") ||
+               n.contains("lieu") || n.contains("fruits de mer") || n.contains("truite") ||
+               n.contains("saint jacques") || n.contains("calmar") || n.contains("seiche")
+    }
+    
+    private static func isVegetableLike(_ item: FoodItem) -> Bool {
+        if isFruitLike(item) || isYogurtLike(item) { return false }
+        if item.category == .vegetables { return true }
+        let n = item.name.lowercased()
+        return n.contains("courgette") || n.contains("carotte") || n.contains("tomate") ||
+               n.contains("brocoli") || n.contains("haricot") || n.contains("pois") ||
+               n.contains("poivron") || n.contains("champignon") || n.contains("épinard") ||
+               n.contains("epinard") || n.contains("aubergine") || n.contains("chou") ||
+               n.contains("oignon") || n.contains("poireau") || n.contains("pomme de terre") ||
+               n.contains("patate") || n.contains("légume") || n.contains("legume")
+    }
+    
+    private static func isBreadLike(_ item: FoodItem) -> Bool {
+        let n = item.name.lowercased()
+        return n.contains("pain") || n.contains("baguette") || n.contains("brioche") ||
+               n.contains("toast") || n.contains("croissant") || n.contains("mie")
+    }
+    
+    private static func isPastaOrRiceLike(_ item: FoodItem) -> Bool {
+        let n = item.name.lowercased()
+        return n.contains("riz") || n.contains("pate") || n.contains("pâte") ||
+               n.contains("spaghetti") || n.contains("penne") || n.contains("coquillette") ||
+               n.contains("tagliatelle") || n.contains("nouille") || n.contains("gnocchi")
+    }
+    
+    private static func isDairyLike(_ item: FoodItem) -> Bool {
+        if item.category == .dairy { return true }
+        return isYogurtLike(item) || isCheeseLike(item)
+    }
+}
         
         if let maxT = maxTimeMinutes {
             results = results.filter { ($0.prepTimeMinutes + $0.cookTimeMinutes) <= maxT }

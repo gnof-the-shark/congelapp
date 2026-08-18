@@ -11,18 +11,21 @@ Le module **Recettes Anti-Gaspi** propose automatiquement des repas équilibrés
 ### Fonctionnalités Clés :
 - **Génération automatique d'idées** : Interroge la base culinaire en ligne via TheMealDB (`https://www.themealdb.com/api.php`) à partir des aliments réels du congélateur.
 - **Moteur de traduction bidirectionnel (`FrenchCulinaryTranslator`)** :
-  - Traduction transparente des aliments français vers l'anglais pour la recherche en ligne (ex: *poulet* -> *chicken*, *saumon* -> *salmon*, *haricots verts* -> *green beans*).
+  - Traduction transparente des aliments français vers l'anglais pour la recherche en ligne (ex: *poulet* -> *chicken*, *saumon* -> *salmon*, *haricots verts* -> *green beans*, *yogourt* -> *yogurt*).
   - Traduction automatique en français de toutes les recettes : titres, catégories, origines culinaires, liste complète des ingrédients/mesures et étapes de préparation.
 - **Affichage épuré Anti-Gaspi** : L'interface affiche uniquement l'intitulé « Recettes Anti-Gaspi », sans mentionner de nom de service tiers.
 - **Déstockage en 1 clic** : Le bouton **« Cuisiner & Déstocker »** déduit automatiquement 1 quantité des ingrédients concernés dans l'inventaire du congélateur.
-- **Fallback Hors-Ligne (`LocalRecipeEngine`)** : En cas d'absence de réseau, le moteur local génère des recettes anti-gaspi personnalisées basées sur le stock.
+- **Génération Culinaire Contextuelle Réaliste (`LocalRecipeEngine`)** : 
+  - Analyse fine de la nature de chaque ingrédient (laitiers, yaourts, viandes, poissons, fruits, légumes, pain, féculents).
+  - Génère des recettes parfaitement adaptées au profil culinaire : par exemple, le yogourt / skyr propose des gâteaux moelleux, coupes fraîches au miel ou tzatziki aux herbes (jamais de cuisson inadaptée à la poêle).
 
 ---
 
-## 2. Trouveur d'Objet IA avec Verrouillage Visuel
+## 2. Trouveur d'Objet IA avec Suivi Visuel en Direct (Live Tracking)
 
-- **Détection & Cadrage Complet du Produit** : L'algorithme (`expandToProductBoundingBox`) élargit la boîte englobante pour entourer **l'ensemble de l'emballage du produit**, et non seulement le bloc de texte isolé.
-- **Verrouillage Persistant à l'Écran** : Dès la détection du produit cible, la vue capture l'image instantanée et **verrouille le rectangle vert sur le produit**, empêchant le cadre de bouger ou de disparaître même si l'utilisateur déplace la caméra. Un bouton « Rechercher à nouveau » permet de relancer la session.
+- **Flux Caméra Continu & Suivi en Direct** : Après la détection du produit, la caméra reste active et le rectangle vert se déplace en temps réel pour suivre le produit dans le congélateur.
+- **Détection & Cadrage Précis du Contour** : L'algorithme (`expandToProductBoundingBox`) regroupe les zones de texte connexes du paquet et applique un lissage exponentiel (EMA) pour un contouring stable et fluide de l'ensemble de l'emballage.
+- **Persistance & Tolérance aux Mouvements** : Maintient le cadrage vert lors des légers mouvements et flous de bougé.
 
 ---
 

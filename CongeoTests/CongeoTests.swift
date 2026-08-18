@@ -114,5 +114,24 @@ final class CongeoTests: XCTestCase {
         
         let translatedTitle = translator.translateTitle("Chicken Soup")
         XCTAssertTrue(translatedTitle.contains("Poulet") || translatedTitle.contains("Soupe"))
+        
+        XCTAssertEqual(translator.translateSearchTermToEnglish("Yogourt à la vanille"), "yogurt")
+        XCTAssertEqual(translator.translateSearchTermToEnglish("Yaourt nature"), "yogurt")
+    }
+    
+    func testYogurtRecipeGenerationDoesNotPanFry() throws {
+        let yogurtItems = [
+            FoodItem(name: "Yogourt grec", quantity: 2, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 2), category: .dairy)
+        ]
+        
+        let recipes = RecipeEngine.generateRecipes(from: yogurtItems)
+        XCTAssertFalse(recipes.isEmpty)
+        
+        for recipe in recipes {
+            for step in recipe.steps {
+                XCTAssertFalse(step.lowercased().contains("revenir") && step.lowercased().contains("poêle"),
+                               "Une recette de yaourt ne doit pas demander de le faire revenir à la poêle")
+            }
+        }
     }
 }
