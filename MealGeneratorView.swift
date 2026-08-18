@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Modèle de Données Recette Complète (Anti-Gaspi & TheMealDB)
+// MARK: - Modèle de Données Recette Anti-Gaspi Complète
 
 struct AntiWasteRecipe: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
@@ -19,11 +19,10 @@ struct AntiWasteRecipe: Identifiable, Codable, Equatable {
     var thumbnailURL: String? = nil
     var area: String? = nil
     var youtubeURL: String? = nil
-    var isOnlineTheMealDB: Bool = false
     var isFavorite: Bool = false
 }
 
-// MARK: - TheMealDB API Service (https://www.themealdb.com)
+// MARK: - Modèles Décodables de l'API
 
 struct TheMealDBMeal: Codable {
     let idMeal: String?
@@ -79,7 +78,7 @@ struct TheMealDBMeal: Codable {
     let strMeasure19: String?
     let strMeasure20: String?
     
-    func allIngredientsWithMeasures() -> [String] {
+    func allRawIngredientsWithMeasures() -> [(ingredient: String, measure: String)] {
         let ingredients = [
             strIngredient1, strIngredient2, strIngredient3, strIngredient4, strIngredient5,
             strIngredient6, strIngredient7, strIngredient8, strIngredient9, strIngredient10,
@@ -93,15 +92,11 @@ struct TheMealDBMeal: Codable {
             strMeasure16, strMeasure17, strMeasure18, strMeasure19, strMeasure20
         ]
         
-        var result: [String] = []
+        var result: [(ingredient: String, measure: String)] = []
         for i in 0..<ingredients.count {
             if let ing = ingredients[i]?.trimmingCharacters(in: .whitespacesAndNewlines), !ing.isEmpty {
                 let measure = measures[i]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !measure.isEmpty {
-                    result.append("\(ing) (\(measure))")
-                } else {
-                    result.append(ing)
-                }
+                result.append((ingredient: ing, measure: measure))
             }
         }
         return result
@@ -122,85 +117,475 @@ struct TheMealDBFilterResponse: Codable {
     let meals: [TheMealDBFilterItem]?
 }
 
+// MARK: - Moteur de Traduction Culinaire Français <-> Anglais
+
+final class FrenchCulinaryTranslator {
+    static let shared = FrenchCulinaryTranslator()
+    
+    // Traduction Français -> Anglais pour les requêtes de recherche
+    private let frenchToEnglishTerms: [(fr: String, en: String)] = [
+        ("poulet", "chicken"),
+        ("volaille", "chicken"),
+        ("dinde", "turkey"),
+        ("canard", "duck"),
+        ("boeuf", "beef"),
+        ("bœuf", "beef"),
+        ("steak", "beef"),
+        ("viande hachee", "beef"),
+        ("viande hachée", "beef"),
+        ("viande", "meat"),
+        ("porc", "pork"),
+        ("jambon", "ham"),
+        ("lardons", "bacon"),
+        ("bacon", "bacon"),
+        ("saumon", "salmon"),
+        ("poisson", "fish"),
+        ("cabillaud", "cod"),
+        ("morue", "cod"),
+        ("thon", "tuna"),
+        ("crevette", "prawns"),
+        ("crevettes", "prawns"),
+        ("gambas", "prawns"),
+        ("moule", "mussels"),
+        ("moules", "mussels"),
+        ("fruits de mer", "seafood"),
+        ("fruit de mer", "seafood"),
+        ("fromage", "cheese"),
+        ("mozzarella", "mozzarella"),
+        ("parmesan", "parmesan"),
+        ("cheddar", "cheddar"),
+        ("gruyere", "cheese"),
+        ("gruyère", "cheese"),
+        ("beurre", "butter"),
+        ("creme", "cream"),
+        ("crème", "cream"),
+        ("lait", "milk"),
+        ("tomate", "tomato"),
+        ("tomates", "tomatoes"),
+        ("pomme de terre", "potato"),
+        ("pommes de terre", "potatoes"),
+        ("patate", "potato"),
+        ("patates", "potatoes"),
+        ("carotte", "carrot"),
+        ("carottes", "carrots"),
+        ("oignon", "onion"),
+        ("oignons", "onions"),
+        ("ail", "garlic"),
+        ("champignon", "mushroom"),
+        ("champignons", "mushrooms"),
+        ("courgette", "courgettes"),
+        ("courgettes", "courgettes"),
+        ("aubergine", "aubergine"),
+        ("aubergines", "aubergine"),
+        ("haricot", "beans"),
+        ("haricots", "beans"),
+        ("haricots verts", "green beans"),
+        ("petits pois", "peas"),
+        ("pois", "peas"),
+        ("poivron", "pepper"),
+        ("poivrons", "pepper"),
+        ("brocoli", "broccoli"),
+        ("brocolis", "broccoli"),
+        ("epinard", "spinach"),
+        ("epinards", "spinach"),
+        ("épinard", "spinach"),
+        ("épinards", "spinach"),
+        ("chou", "cabbage"),
+        ("riz", "rice"),
+        ("pate", "pasta"),
+        ("pates", "pasta"),
+        ("pâte", "pasta"),
+        ("pâtes", "pasta"),
+        ("spaghetti", "spaghetti"),
+        ("nouille", "noodles"),
+        ("nouilles", "noodles"),
+        ("pain", "bread"),
+        ("oeuf", "egg"),
+        ("oeufs", "eggs"),
+        ("œuf", "egg"),
+        ("œufs", "eggs"),
+        ("pomme", "apple"),
+        ("pommes", "apple"),
+        ("poire", "pear"),
+        ("poires", "pear"),
+        ("fraise", "strawberry"),
+        ("fraises", "strawberry"),
+        ("framboise", "raspberry"),
+        ("framboises", "raspberry"),
+        ("chocolat", "chocolate"),
+        ("citron", "lemon")
+    ]
+    
+    // Dictionnaire de traduction Anglais -> Français des ingrédients
+    private let englishToFrenchIngredients: [String: String] = [
+        "chicken": "Poulet",
+        "chicken breast": "Blanc de poulet",
+        "chicken breasts": "Blancs de poulet",
+        "chicken thighs": "Cuisses de poulet",
+        "beef": "Bœuf",
+        "ground beef": "Bœuf haché",
+        "minced beef": "Bœuf haché",
+        "beef steak": "Steak de bœuf",
+        "pork": "Porc",
+        "pork chops": "Côtes de porc",
+        "bacon": "Bacon / Lardons",
+        "ham": "Jambon",
+        "salmon": "Saumon",
+        "fish": "Poisson",
+        "cod": "Cabillaud",
+        "tuna": "Thon",
+        "prawns": "Crevettes",
+        "shrimp": "Crevettes",
+        "mussels": "Moules",
+        "cheese": "Fromage",
+        "cheddar cheese": "Cheddar",
+        "mozzarella": "Mozzarella",
+        "parmesan": "Parmesan",
+        "parmesan cheese": "Parmesan",
+        "butter": "Beurre",
+        "milk": "Lait",
+        "heavy cream": "Crème liquide",
+        "cream": "Crème",
+        "eggs": "Œufs",
+        "egg": "Œuf",
+        "egg yolk": "Jaune d'œuf",
+        "egg whites": "Blancs d'œufs",
+        "garlic": "Ail",
+        "garlic clove": "Gousse d'ail",
+        "garlic cloves": "Gousses d'ail",
+        "onion": "Oignon",
+        "onions": "Oignons",
+        "red onion": "Oignon rouge",
+        "shallots": "Échalotes",
+        "tomato": "Tomate",
+        "tomatoes": "Tomates",
+        "tomato puree": "Purée de tomates",
+        "tomato paste": "Concentré de tomates",
+        "chopped tomatoes": "Tomates concassées",
+        "potato": "Pomme de terre",
+        "potatoes": "Pommes de terre",
+        "carrots": "Carottes",
+        "carrot": "Carotte",
+        "mushrooms": "Champignons",
+        "mushroom": "Champignon",
+        "broccoli": "Brocolis",
+        "spinach": "Épinards",
+        "green beans": "Haricots verts",
+        "peas": "Petits pois",
+        "peppers": "Poivrons",
+        "red pepper": "Poivron rouge",
+        "green pepper": "Poivron vert",
+        "courgettes": "Courgettes",
+        "zucchini": "Courgettes",
+        "aubergine": "Aubergine",
+        "eggplant": "Aubergine",
+        "rice": "Riz",
+        "basmati rice": "Riz basmati",
+        "pasta": "Pâtes",
+        "spaghetti": "Spaghetti",
+        "penne": "Penne",
+        "noodles": "Nouilles",
+        "bread": "Pain",
+        "flour": "Farine",
+        "plain flour": "Farine",
+        "sugar": "Sucre",
+        "brown sugar": "Sucre roux",
+        "salt": "Sel",
+        "black pepper": "Poivre noir",
+        "pepper": "Poivre",
+        "olive oil": "Huile d'olive",
+        "vegetable oil": "Huile végétale",
+        "sunflower oil": "Huile de tournesol",
+        "sesame oil": "Huile de sésame",
+        "soy sauce": "Sauce soja",
+        "worcestershire sauce": "Sauce Worcestershire",
+        "vinegar": "Vinaigre",
+        "balsamic vinegar": "Vinaigre balsamique",
+        "lemon": "Citron",
+        "lemon juice": "Jus de citron",
+        "lime": "Citron vert",
+        "parsley": "Persil",
+        "coriander": "Coriandre",
+        "basil": "Basilic",
+        "thyme": "Thym",
+        "rosemary": "Romarin",
+        "oregano": "Origan",
+        "paprika": "Paprika",
+        "cumin": "Cumin",
+        "ginger": "Gingembre",
+        "chilli": "Piment",
+        "chili powder": "Piment en poudre",
+        "chicken stock": "Bouillon de volaille",
+        "beef stock": "Bouillon de bœuf",
+        "vegetable stock": "Bouillon de légumes",
+        "water": "Eau",
+        "honey": "Miel",
+        "mustard": "Moutarde",
+        "dijon mustard": "Moutarde de Dijon",
+        "mayonnaise": "Mayonnaise",
+        "strawberries": "Fraises",
+        "apples": "Pommes",
+        "chocolate": "Chocolat"
+    ]
+    
+    // Traduction des catégories en français
+    private let categoriesMap: [String: String] = [
+        "beef": "Bœuf",
+        "chicken": "Volaille & Poulet",
+        "dessert": "Dessert",
+        "lamb": "Agneau",
+        "miscellaneous": "Plat Maison",
+        "pasta": "Pâtes & Risotto",
+        "pork": "Porc",
+        "seafood": "Poissons & Fruits de mer",
+        "side": "Accompagnement",
+        "starter": "Entrée",
+        "vegan": "100% Végétalien",
+        "vegetarian": "Végétarien",
+        "breakfast": "Petit-Déjeuner",
+        "goat": "Plat Mijoté"
+    ]
+    
+    // Traduction des origines culinaires
+    private let areasMap: [String: String] = [
+        "american": "Américaine",
+        "british": "Britannique",
+        "canadian": "Canadienne",
+        "chinese": "Chinoise",
+        "croatian": "Croate",
+        "dutch": "Hollandaise",
+        "egyptian": "Égyptienne",
+        "filipino": "Philippine",
+        "french": "Française",
+        "greek": "Grecque",
+        "indian": "Indienne",
+        "irish": "Irlandaise",
+        "italian": "Italienne",
+        "jamaican": "Jamaïcaine",
+        "japanese": "Japonaise",
+        "kenyan": "Kényane",
+        "malaysian": "Malaise",
+        "mexican": "Mexicaine",
+        "moroccan": "Marocaine",
+        "polish": "Polonaise",
+        "portuguese": "Portugaise",
+        "russian": "Russe",
+        "spanish": "Espagnole",
+        "thai": "Thaïlandaise",
+        "tunisian": "Tunisienne",
+        "turkish": "Turque",
+        "vietnamese": "Vietnamienne"
+    ]
+    
+    func translateSearchTermToEnglish(_ frenchQuery: String) -> String {
+        let clean = frenchQuery.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for pair in frenchToEnglishTerms {
+            if clean.contains(pair.fr) {
+                return pair.en
+            }
+        }
+        return clean
+    }
+    
+    func translateCategory(_ category: String?) -> String {
+        guard let cat = category?.lowercased() else { return "Plat Chaud" }
+        return categoriesMap[cat] ?? category?.capitalized ?? "Plat Chaud"
+    }
+    
+    func translateArea(_ area: String?) -> String? {
+        guard let a = area?.lowercased() else { return nil }
+        return areasMap[a] ?? area?.capitalized
+    }
+    
+    func translateTitle(_ title: String) -> String {
+        var translated = title
+        
+        let replacements: [(en: String, fr: String)] = [
+            ("Chicken Handi", "Poulet Handi à l'indienne"),
+            ("Chicken Alfredo", "Pâtes au Poulet & Crème Alfredo"),
+            ("Chicken Curry", "Curry de Poulet Savoureux"),
+            ("Chicken Fajitas", "Fajitas au Poulet Grillé"),
+            ("Chicken Quesadilla", "Quesadilla Gourmande au Poulet"),
+            ("Chicken Soup", "Soupe Réconfortante au Poulet"),
+            ("Chicken Wings", "Ailes de Poulet Dorées"),
+            ("Beef Stroganoff", "Bœuf Stroganoff Fondant"),
+            ("Beef Bourguignon", "Bœuf Bourguignon Traditionnel"),
+            ("Beef Stew", "Ragoût de Bœuf Rustique"),
+            ("Beef Wellington", "Bœuf Wellington en Croûte"),
+            ("Beef and Mustard Pie", "Tourte au Bœuf & Moutarde"),
+            ("Salmon Pesto", "Pavé de Saumon au Pesto"),
+            ("Grilled Salmon", "Saumon Grillé aux Herbes"),
+            ("Fish and Chips", "Fish & Chips Traditionnel"),
+            ("Spaghetti Bolognese", "Spaghetti à la Bolognaise"),
+            ("Spaghetti Carbonara", "Spaghetti Carbonara"),
+            ("Lasagne", "Lasagnes Maison au Four"),
+            ("Vegetable Soup", "Velouté de Légumes du Jardin"),
+            ("Vegetable Curry", "Curry Doux de Légumes"),
+            ("Mushroom Risotto", "Risotto Crémeux aux Champignons"),
+            ("French Onion Soup", "Soupe à l'Oignon Gratinée"),
+            ("Apple Pie", "Tarte aux Pommes Dorée"),
+            ("Chocolate Cake", "Gâteau Moelleux au Chocolat"),
+            ("Pancakes", "Pancakes Moelleux Maison"),
+            ("Chicken", "Poulet"),
+            ("Beef", "Bœuf"),
+            ("Salmon", "Saumon"),
+            ("Fish", "Poisson"),
+            ("Pork", "Porc"),
+            ("Soup", "Soupe"),
+            ("Stew", "Ragoût"),
+            ("Pie", "Tourte"),
+            ("Salad", "Salade"),
+            ("Fried", "Poêlée de"),
+            ("Grilled", "Grillade de"),
+            ("Roasted", "Rôti de"),
+            ("Baked", "Gratin de"),
+            ("with", "au"),
+            ("and", "et")
+        ]
+        
+        for rep in replacements {
+            if translated.contains(rep.en) {
+                translated = translated.replacingOccurrences(of: rep.en, with: rep.fr)
+            }
+        }
+        
+        return translated
+    }
+    
+    func translateIngredientItem(rawIngredient: String, rawMeasure: String) -> String {
+        let cleanIng = rawIngredient.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let frIng = englishToFrenchIngredients[cleanIng] ?? rawIngredient.capitalized
+        
+        var frMeasure = rawMeasure.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let measureReplacements: [(en: String, fr: String)] = [
+            ("tablespoons", "c. à soupe"),
+            ("tablespoon", "c. à soupe"),
+            ("tbsp", "c. à soupe"),
+            ("tbsps", "c. à soupe"),
+            ("teaspoons", "c. à café"),
+            ("teaspoon", "c. à café"),
+            ("tsp", "c. à café"),
+            ("tsps", "c. à café"),
+            ("cups", "tasses"),
+            ("cup", "tasse"),
+            ("ounces", "oz"),
+            ("ounce", "oz"),
+            ("pounds", "lb"),
+            ("pound", "lb"),
+            ("pinch", "pincée"),
+            ("cloves", "gousses"),
+            ("clove", "gousse"),
+            ("slices", "tranches"),
+            ("slice", "tranche"),
+            ("diced", "coupé en dés"),
+            ("chopped", "émincé"),
+            ("minced", "haché"),
+            ("grated", "râpé"),
+            ("to taste", "selon votre goût")
+        ]
+        
+        for m in measureReplacements {
+            frMeasure = frMeasure.replacingOccurrences(of: m.en, with: m.fr, options: .caseInsensitive)
+        }
+        
+        if frMeasure.isEmpty {
+            return frIng
+        } else {
+            return "\(frIng) (\(frMeasure))"
+        }
+    }
+    
+    func translateInstructions(_ rawInstructions: String) -> [String] {
+        let lines = rawInstructions.components(separatedBy: CharacterSet.newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("STEP") && !$0.hasPrefix("Step") }
+        
+        var sentences: [String] = []
+        if lines.count > 1 {
+            sentences = lines
+        } else if let single = lines.first {
+            let parts = single.components(separatedBy: ". ")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            sentences = parts
+        }
+        
+        if sentences.isEmpty {
+            return ["Préparez les ingrédients selon la liste ci-dessus.", "Faites cuire à feu moyen jusqu'à obtention d'une belle texture dorée.", "Servez bien chaud et dégustez !"]
+        }
+        
+        // Traduction des phrases culinaires courantes
+        let instructionReplacements: [(en: String, fr: String)] = [
+            ("Preheat oven to", "Préchauffez votre four à"),
+            ("Preheat the oven to", "Préchauffez votre four à"),
+            ("Heat the oil in a large", "Faites chauffer l'huile dans un(e) grand(e)"),
+            ("Heat oil in a large", "Faites chauffer l'huile dans un(e) grand(e)"),
+            ("Heat the oil in a pan", "Faites chauffer un filet d'huile dans une poêle"),
+            ("Heat oil in a pan", "Faites chauffer un filet d'huile dans une poêle"),
+            ("In a large bowl", "Dans un grand saladier"),
+            ("In a medium bowl", "Dans un bol moyen"),
+            ("In a small bowl", "Dans un petit bol"),
+            ("In a large pot", "Dans une grande casserole"),
+            ("In a large saucepan", "Dans une grande sauteuse"),
+            ("Mix together", "Mélangez soigneusement ensemble"),
+            ("Stir in the", "Incorporez"),
+            ("Stir in", "Incorporez"),
+            ("Season with salt and pepper", "Assaisonnez avec du sel et du poivre"),
+            ("Season with salt & pepper", "Assaisonnez avec du sel et du poivre"),
+            ("Cook until golden brown", "Faites cuire jusqu'à ce que ce soit bien doré"),
+            ("Cook for", "Laissez cuire pendant"),
+            ("Bake for", "Enfournez pendant"),
+            ("Bring to a boil", "Portez à ébullition"),
+            ("Reduce heat and simmer", "Baissez le feu et laissez mijoter"),
+            ("Serve hot", "Servez immédiatement bien chaud"),
+            ("Serve with", "Servez accompagné de"),
+            ("Garnish with", "Garnissez avec"),
+            ("Let cool", "Laissez tiédir"),
+            ("Drain and rinse", "Égouttez soigneusement"),
+            ("Chop the", "Émincez finement"),
+            ("Dice the", "Coupez en dés"),
+            ("Melt the butter", "Faites fondre le beurre"),
+            ("Whisk together", "Fouettez ensemble"),
+            ("Add the", "Ajoutez"),
+            ("Add", "Ajoutez")
+        ]
+        
+        var translatedSteps: [String] = []
+        for s in sentences {
+            var step = s
+            for rep in instructionReplacements {
+                step = step.replacingOccurrences(of: rep.en, with: rep.fr, options: .caseInsensitive)
+            }
+            if !step.hasSuffix(".") {
+                step += "."
+            }
+            translatedSteps.append(step)
+        }
+        
+        return translatedSteps
+    }
+}
+
+// MARK: - TheMealDB API Service (https://www.themealdb.com)
+
 final class TheMealDBService {
     static let shared = TheMealDBService()
     private let baseURL = "https://www.themealdb.com/api/json/v1/1"
     
-    // Traduction de base Français -> Anglais pour optimiser les requêtes TheMealDB
-    private let translationDict: [String: String] = [
-        "poulet": "chicken",
-        "volaille": "chicken",
-        "dinde": "turkey",
-        "boeuf": "beef",
-        "bœuf": "beef",
-        "steak": "beef",
-        "viande": "meat",
-        "porc": "pork",
-        "jambon": "ham",
-        "bacon": "bacon",
-        "saumon": "salmon",
-        "poisson": "fish",
-        "thon": "tuna",
-        "cabillaud": "cod",
-        "crevette": "prawns",
-        "crevettes": "prawns",
-        "fruit de mer": "seafood",
-        "fromage": "cheese",
-        "mozzarella": "mozzarella",
-        "parmesan": "parmesan",
-        "lait": "milk",
-        "beurre": "butter",
-        "tomate": "tomato",
-        "tomates": "tomatoes",
-        "pomme de terre": "potato",
-        "pommes de terre": "potatoes",
-        "carotte": "carrot",
-        "carottes": "carrots",
-        "oignon": "onion",
-        "oignons": "onions",
-        "ail": "garlic",
-        "champignon": "mushroom",
-        "champignons": "mushrooms",
-        "courgette": "courgette",
-        "haricot": "beans",
-        "haricots": "beans",
-        "riz": "rice",
-        "pate": "pasta",
-        "pâtes": "pasta",
-        "pain": "bread",
-        "oeuf": "egg",
-        "oeufs": "eggs",
-        "œufs": "eggs",
-        "pomme": "apple",
-        "fraise": "strawberry",
-        "framboise": "raspberry",
-        "chocolat": "chocolate"
-    ]
-    
-    func translateIngredientToEnglish(_ raw: String) -> String {
-        let lower = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        for (fr, en) in translationDict {
-            if lower.contains(fr) {
-                return en
-            }
-        }
-        return lower
-    }
-    
-    // Rechercher des repas complets par ingrédient ou terme de recherche
     func searchMeals(query: String, matchedStockNames: [String] = []) async -> [AntiWasteRecipe] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         
-        let translated = translateIngredientToEnglish(trimmed)
-        let queryEncoded = (translated.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? translated)
+        let translatedToEnglish = FrenchCulinaryTranslator.shared.translateSearchTermToEnglish(trimmed)
+        let queryEncoded = (translatedToEnglish.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? translatedToEnglish)
         
-        // 1. Essayer une recherche par nom complet
+        // 1. Recherche par mot-clé
         if let directResults = await fetchDirectSearch(queryEncoded: queryEncoded, matchedStockNames: matchedStockNames), !directResults.isEmpty {
             return directResults
         }
         
-        // 2. Sinon essayer le filtre par ingrédient principal
+        // 2. Recherche par filtre ingrédient
         if let filteredResults = await fetchFilteredByIngredient(ingredientEncoded: queryEncoded, matchedStockNames: matchedStockNames), !filteredResults.isEmpty {
             return filteredResults
         }
@@ -231,7 +616,6 @@ final class TheMealDBService {
             let decoded = try JSONDecoder().decode(TheMealDBFilterResponse.self, from: data)
             guard let meals = decoded.meals, !meals.isEmpty else { return nil }
             
-            // Récupérer les détails des 5 premiers résultats pour avoir les étapes complètes
             var recipes: [AntiWasteRecipe] = []
             for item in meals.prefix(5) {
                 if let detail = await fetchMealDetails(id: item.idMeal) {
@@ -256,7 +640,6 @@ final class TheMealDBService {
         }
     }
     
-    // Obtenir une recette aléatoire pour inspiration
     func fetchRandomMeal(matchedStockNames: [String] = []) async -> AntiWasteRecipe? {
         guard let url = URL(string: "\(baseURL)/random.php") else { return nil }
         do {
@@ -271,61 +654,55 @@ final class TheMealDBService {
     }
     
     private func convertToAntiWasteRecipe(_ meal: TheMealDBMeal, matchedStockNames: [String]) -> AntiWasteRecipe {
-        let title = meal.strMeal ?? "Recette TheMealDB"
-        let category = meal.strCategory ?? "Gourmet"
-        let area = meal.strArea
-        let allIngredients = meal.allIngredientsWithMeasures()
+        let rawTitle = meal.strMeal ?? "Recette Gourmande Anti-Gaspi"
+        let frenchTitle = FrenchCulinaryTranslator.shared.translateTitle(rawTitle)
+        let frenchCategory = FrenchCulinaryTranslator.shared.translateCategory(meal.strCategory)
+        let frenchArea = FrenchCulinaryTranslator.shared.translateArea(meal.strArea)
         
-        // Découper les instructions en étapes
-        var steps: [String] = []
-        if let rawInstructions = meal.strInstructions {
-            let lines = rawInstructions.components(separatedBy: CharacterSet.newlines)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
+        let rawIngredients = meal.allRawIngredientsWithMeasures()
+        let translatedIngredients = rawIngredients.map {
+            FrenchCulinaryTranslator.shared.translateIngredientItem(rawIngredient: $0.ingredient, rawMeasure: $0.measure)
+        }
+        
+        let steps = FrenchCulinaryTranslator.shared.translateInstructions(meal.strInstructions ?? "")
+        
+        // Trouver les ingrédients du congélateur utilisés dans cette recette
+        var matched: [String] = []
+        for stock in matchedStockNames {
+            let stockLower = stock.lowercased()
+            let stockEn = FrenchCulinaryTranslator.shared.translateSearchTermToEnglish(stockLower)
             
-            if lines.count > 1 {
-                steps = lines
-            } else if let single = lines.first {
-                // Découpage par phrases
-                let sentences = single.components(separatedBy: ". ")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                steps = sentences.map { $0.hasSuffix(".") ? $0 : "\($0)." }
+            let found = rawIngredients.contains { raw in
+                let ingLower = raw.ingredient.lowercased()
+                return ingLower.contains(stockLower) || stockLower.contains(ingLower) ||
+                       ingLower.contains(stockEn) || stockEn.contains(ingLower)
+            }
+            if found {
+                matched.append(stock)
             }
         }
         
-        if steps.isEmpty {
-            steps = ["Suivez les instructions fournies dans la fiche TheMealDB pour préparer ce délicieux plat."]
-        }
-        
-        // Identifier les ingrédients qui matchent avec le stock
-        var matched = matchedStockNames.filter { stockName in
-            allIngredients.contains { ing in
-                ing.localizedCaseInsensitiveContains(stockName) || stockName.localizedCaseInsensitiveContains(ing)
-            }
-        }
         if matched.isEmpty && !matchedStockNames.isEmpty {
             matched = [matchedStockNames.first!]
         }
         
-        let emoji = categoryEmoji(for: category)
+        let emoji = categoryEmoji(for: meal.strCategory ?? "")
         
         return AntiWasteRecipe(
-            title: title,
+            title: frenchTitle,
             emoji: emoji,
-            category: category,
+            category: frenchCategory,
             prepTimeMinutes: 15,
             cookTimeMinutes: 25,
             servings: 4,
-            difficulty: "Standard",
+            difficulty: "Facile",
             matchedInventoryItemNames: matched,
-            pantryStaples: allIngredients,
+            pantryStaples: translatedIngredients,
             steps: steps,
-            chefTip: "Recette issue de la base TheMealDB. N'hésitez pas à ajuster les assaisonnements selon vos goûts !",
+            chefTip: "Idéale pour utiliser vos aliments congelés en priorité et éviter tout gaspillage alimentaire !",
             thumbnailURL: meal.strMealThumb,
-            area: area,
+            area: frenchArea,
             youtubeURL: meal.strYoutube,
-            isOnlineTheMealDB: true,
             isFavorite: false
         )
     }
@@ -349,9 +726,11 @@ final class TheMealDBService {
     }
 }
 
-// MARK: - Moteur Culinaire Intelligent Local Anti-Gaspi
+// MARK: - Moteur Culinaire Local de Secours (100% Hors-Ligne)
 
-struct RecipeEngine {
+typealias RecipeEngine = LocalRecipeEngine
+
+struct LocalRecipeEngine {
     static func generateRecipes(from items: [FoodItem], maxTimeMinutes: Int? = nil, isVeggieOnly: Bool = false) -> [AntiWasteRecipe] {
         guard !items.isEmpty else { return [] }
         
@@ -399,7 +778,7 @@ struct RecipeEngine {
             ))
         }
         
-        // 2. Poêlée Rustique Express Saveurs du Sud
+        // 2. Poêlée Rustique Express
         let mainIngredient = isVeggieOnly ? availableVeg.first : (availableMeat.first ?? availableFish.first ?? availableVeg.first)
         if let main = mainIngredient {
             let companion = availableVeg.first(where: { $0.id != main.id }) ?? availableOther.first
@@ -419,7 +798,7 @@ struct RecipeEngine {
                 steps: [
                     "Chauffez l'huile d'olive dans une grande poêle ou un wok à feu vif.",
                     "Faites suer l'oignon émincé jusqu'à ce qu'il devienne translucide.",
-                    "Ajoutez directement \(main.name) sans décongélation préalable si les morceaux sont fins, ou décongelés au micro-ondes pendant 2 minutes.",
+                    "Ajoutez directement \(main.name) sans décongélation préalable si les morceaux sont fins.",
                     companion != nil ? "Incorporez \(companion!.name) et faites sauter l'ensemble pendant 8 à 10 minutes en remuant régulièrement." : "Faites sauter pendant 8 à 10 minutes en remuant régulièrement.",
                     "Assaisonnez avec les herbes de Provence, le sel, le poivre et terminez avec un filet de jus de citron."
                 ],
@@ -427,14 +806,14 @@ struct RecipeEngine {
             ))
         }
         
-        // 3. Wok Gourmand & Riz Sauté Fond-de-Tiroir
+        // 3. Wok Asiatique Épicé
         if let protein = isVeggieOnly ? nil : (availableMeat.first ?? availableFish.first) {
             let veg = availableVeg.first
             var matched = [protein.name]
             if let v = veg { matched.append(v.name) }
             
             results.append(AntiWasteRecipe(
-                title: "Wok Asiatique Épicé au \(protein.name)",
+                title: "Wok Asiatique au \(protein.name)",
                 emoji: "🥢",
                 category: "Wok & Sauté",
                 prepTimeMinutes: 12,
@@ -442,19 +821,19 @@ struct RecipeEngine {
                 servings: 3,
                 difficulty: "Facile",
                 matchedInventoryItemNames: matched,
-                pantryStaples: ["Riz cuit ou nouilles (250g)", "3 c. à soupe de sauce soja", "1 c. à café d'huile de sésame", "1 gousse d'ail écrasée", "Gingembre moulu", "1 œuf battu"],
+                pantryStaples: ["Riz cuit ou nouilles (250g)", "3 c. à soupe de sauce soja", "1 c. à café d'huile de sésame", "1 gousse d'ail écrasée", "1 œuf battu"],
                 steps: [
                     "Découpez \(protein.name) en fines lamelles.",
                     "Faites chauffer un filet d'huile dans un wok à feu très vif.",
-                    "Faites dorer la viande/poisson pendant 3 minutes avec l'ail et le gingembre.",
+                    "Faites dorer avec l'ail pendant 3 minutes.",
                     veg != nil ? "Ajoutez \(veg!.name) et poursuivez la cuisson 4 minutes." : "Baissez le feu.",
-                    "Poussez les aliments sur le côté du wok, versez l'œuf battu pour le brouiller rapidement, puis mélangez avec le riz et la sauce soja."
+                    "Versez l'œuf battu pour le brouiller rapidement, puis mélangez avec le riz et la sauce soja."
                 ],
                 chefTip: "Le riz de la veille légèrement sec est parfait pour cette recette anti-gaspi !"
             ))
         }
         
-        // 4. Velouté Onctueux Réconfortant
+        // 4. Velouté Réconfortant
         if availableVeg.count >= 1 {
             let veg1 = availableVeg[0]
             let veg2 = availableVeg.count > 1 ? availableVeg[1] : nil
@@ -470,19 +849,19 @@ struct RecipeEngine {
                 servings: 4,
                 difficulty: "Très facile",
                 matchedInventoryItemNames: matched,
-                pantryStaples: ["1 cube de bouillon de légumes ou volaille", "600 ml d'eau", "2 c. à soupe de crème fraîche ou fromage frais", "1 noisette de beurre", "Sel & poivre"],
+                pantryStaples: ["1 cube de bouillon de légumes", "600 ml d'eau", "2 c. à soupe de crème fraîche", "1 noisette de beurre", "Sel & poivre"],
                 steps: [
                     "Dans une casserole, faites fondre le beurre et faites revenir les légumes \(matched.joined(separator: " et ")) pendant 3 minutes.",
                     "Ajoutez l'eau chaude et émiettez le cube de bouillon.",
                     "Portez à ébullition, couvrez et laissez mijoter à feu moyen pendant 15 minutes.",
                     "Mixez finement à l'aide d'un mixeur plongeant jusqu'à consistance lisse et soyeuse.",
-                    "Incorporez la crème fraîche, rectifiez l'assaisonnement et servez bien chaud avec des croûtons."
+                    "Incorporez la crème fraîche, rectifiez l'assaisonnement et servez bien chaud."
                 ],
                 chefTip: "Parfait pour utiliser les fins de sachets de légumes qui traînent au fond du bac !"
             ))
         }
         
-        // 5. Quiche / Tarte Rustique du Placard
+        // 5. Tarte Rustique
         if let item = sortedItems.first {
             var matched = [item.name]
             if let second = sortedItems.first(where: { $0.id != item.id }) {
@@ -498,19 +877,19 @@ struct RecipeEngine {
                 servings: 4,
                 difficulty: "Facile",
                 matchedInventoryItemNames: matched,
-                pantryStaples: ["1 pâte feuilletée ou brisée", "3 œufs entiers", "20 cl de crème liquide", "100g de fromage râpé", "Sel, poivre & muscade"],
+                pantryStaples: ["1 pâte feuilletée", "3 œufs entiers", "20 cl de crème liquide", "100g de fromage râpé", "Sel, poivre & muscade"],
                 steps: [
                     "Préchauffez votre four à 180°C et déroulez la pâte dans un moule à tarte.",
-                    "Faites revenir rapidement les ingrédients \(matched.joined(separator: " et ")) à la poêle pour évacuer l'excès d'humidité.",
-                    "Dans un bol, fouettez les œufs avec la crème, le sel, le poivre et une pincée de muscade.",
-                    "Disposez les ingrédients sur le fond de tarte et versez l'appareil à quiche par-dessus.",
-                    "Parsemez de fromage râpé et enfournez pour 30 minutes jusqu'à ce que la tarte soit bien gonflée et dorée."
+                    "Faites revenir rapidement les ingrédients \(matched.joined(separator: " et ")) à la poêle.",
+                    "Dans un bol, fouettez les œufs avec la crème, le sel et le poivre.",
+                    "Disposez les ingrédients sur le fond de tarte et versez l'appareil par-dessus.",
+                    "Parsemez de fromage râpé et enfournez pour 30 minutes jusqu'à ce que la tarte soit dorée."
                 ],
-                chefTip: "Piquez le fond de tarte à la fourchette avant de garnir pour une cuisson bien croustillante."
+                chefTip: "Piquez le fond de tarte à la fourchette avant de garnir pour une cuisson croustillante."
             ))
         }
         
-        // 6. Smoothie ou Dessert Fruité Anti-Gaspi
+        // 6. Smoothie Fruité
         if let fruits = availableFruits.first {
             results.append(AntiWasteRecipe(
                 title: "Smoothie Bowl Vitaminé aux \(fruits.name)",
@@ -521,14 +900,14 @@ struct RecipeEngine {
                 servings: 2,
                 difficulty: "Ultra Rapide",
                 matchedInventoryItemNames: [fruits.name],
-                pantryStaples: ["1 yaourt nature ou fromage blanc (150g)", "1 banane ou 10 cl de lait", "1 c. à soupe de miel ou sirop d'érable", "Graines de chia ou flocons d'avoine"],
+                pantryStaples: ["1 yaourt nature (150g)", "1 banane ou 10 cl de lait", "1 c. à soupe de miel", "Flocons d'avoine"],
                 steps: [
-                    "Placez les \(fruits.name) encore congelés directement dans le bol d'un blender.",
+                    "Placez les \(fruits.name) congelés directement dans le bol d'un blender.",
                     "Ajoutez le yaourt, la banane et le miel.",
-                    "Mixez par pulsations à haute vitesse pendant 45 secondes jusqu'à texture onctueuse et crémeuse.",
-                    "Versez dans des bols et décorez avec des graines ou du granola pour le croquant."
+                    "Mixez à haute vitesse pendant 45 secondes jusqu'à texture onctueuse.",
+                    "Versez dans des bols et décorez avec des graines ou du granola."
                 ],
-                chefTip: "Les fruits surgelés donnent une texture glacée parfaite sans avoir besoin d'ajouter de glaçons !"
+                chefTip: "Les fruits surgelés donnent une texture glacée parfaite sans avoir besoin de glaçons !"
             ))
         }
         
@@ -540,27 +919,25 @@ struct RecipeEngine {
     }
 }
 
-// MARK: - Vue Complète du Générateur de Recettes (Anti-Gaspi & TheMealDB)
+// MARK: - Vue Principale du Générateur de Recettes Anti-Gaspi
 
 struct MealGeneratorView: View {
     @EnvironmentObject var inventory: InventoryManager
     @EnvironmentObject var license: LicenseManager
     
     enum RecipeTabSection: Int {
-        case antiWaste = 0
-        case theMealDB = 1
-        case favorites = 2
+        case suggestions = 0
+        case favorites = 1
     }
     
-    @State private var currentTabSection: RecipeTabSection = .antiWaste
-    @State private var localRecipes: [AntiWasteRecipe] = []
-    @State private var onlineMealDBRecipes: [AntiWasteRecipe] = []
+    @State private var currentTabSection: RecipeTabSection = .suggestions
+    @State private var suggestedRecipes: [AntiWasteRecipe] = []
     @State private var favorites: [AntiWasteRecipe] = []
     
-    @State private var maxTimeFilter: Int = 45
+    @State private var maxTimeFilter: Int = 90
     @State private var isVeggieOnly = false
-    @State private var onlineSearchQuery = ""
-    @State private var isFetchingOnline = false
+    @State private var searchQuery = ""
+    @State private var isLoading = false
     
     @State private var toastMessage = ""
     @State private var showToast = false
@@ -583,13 +960,13 @@ struct MealGeneratorView: View {
                                 .foregroundColor(.orange)
                         }
                         
-                        Text("Générateur Culinaire Anti-Gaspi & TheMealDB")
+                        Text("Générateur de Recettes Anti-Gaspi")
                             .font(.title2)
                             .bold()
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                         
-                        Text("Transformez instantanément vos produits proches de la date limite en délicieux repas équilibrés avec étapes détaillées, inspirations mondiales TheMealDB et déduction automatique du stock.")
+                        Text("Transformez instantanément vos produits proches de la date limite en délicieux repas équilibrés avec étapes pas-à-pas, photos et déstockage automatique.")
                             .multilineTextAlignment(.center)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -597,8 +974,7 @@ struct MealGeneratorView: View {
                         
                         VStack(alignment: .leading, spacing: 8) {
                             FeatureBenefitRow(icon: "bolt.fill", title: "Priorité aux dates courtes", description: "Cible d'abord les aliments à consommer en urgence")
-                            FeatureBenefitRow(icon: "globe.europe.africa.fill", title: "Inspirations TheMealDB", description: "Accès à des milliers de recettes du monde avec photos")
-                            FeatureBenefitRow(icon: "list.bullet.clipboard.fill", title: "Recettes pas-à-pas", description: "Ingrédients complets, mesures et étapes guidées")
+                            FeatureBenefitRow(icon: "photo.fill", title: "Photos & Étapes en Français", description: "Visuels détaillés, dosages précis et guide de préparation")
                             FeatureBenefitRow(icon: "minus.circle.fill", title: "Déstockage en 1 clic", description: "Met à jour automatiquement votre inventaire")
                         }
                         .padding()
@@ -623,25 +999,63 @@ struct MealGeneratorView: View {
                         Spacer()
                     }
                 } else {
-                    // Sélecteur d'onglets de recettes
                     VStack(spacing: 8) {
-                        Picker("Section", selection: $currentTabSection) {
-                            Text("Anti-Gaspi (\(localRecipes.count))").tag(RecipeTabSection.antiWaste)
-                            Text("TheMealDB 🌐").tag(RecipeTabSection.theMealDB)
-                            Text("Favoris (\(favorites.count))").tag(RecipeTabSection.favorites)
+                        // Barre de recherche
+                        HStack(spacing: 8) {
+                            HStack {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundColor(.secondary)
+                                TextField("Rechercher une recette ou un ingrédient...", text: $searchQuery)
+                                    .onSubmit {
+                                        Task { await searchCustomRecipe() }
+                                    }
+                                if !searchQuery.isEmpty {
+                                    Button {
+                                        searchQuery = ""
+                                        Task { await loadAutoFreezerRecipes() }
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .padding(8)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .cornerRadius(10)
+                            
+                            Button {
+                                Task { await searchCustomRecipe() }
+                            } label: {
+                                Text("Chercher")
+                                    .font(.caption)
+                                    .bold()
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.cyan)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(8)
+                            }
+                            .disabled(isLoading)
                         }
-                        .pickerStyle(.segmented)
                         .padding(.horizontal)
                         .padding(.top, 8)
                         
-                        // Contrôles spécifiques à chaque sous-onglet
-                        if currentTabSection == .antiWaste {
-                            HStack(spacing: 12) {
+                        // Sélecteur d'onglets
+                        Picker("Section", selection: $currentTabSection) {
+                            Text("Idées du Stock (\(suggestedRecipes.count))").tag(RecipeTabSection.suggestions)
+                            Text("Mes Favoris (\(favorites.count))").tag(RecipeTabSection.favorites)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal)
+                        
+                        // Filtres et actions rapides
+                        if currentTabSection == .suggestions {
+                            HStack(spacing: 8) {
                                 Menu {
-                                    Button("Tous les temps") { maxTimeFilter = 90; refreshLocalRecipes() }
-                                    Button("Moins de 20 min (Express)") { maxTimeFilter = 20; refreshLocalRecipes() }
-                                    Button("Moins de 35 min") { maxTimeFilter = 35; refreshLocalRecipes() }
-                                    Button("Moins de 50 min") { maxTimeFilter = 50; refreshLocalRecipes() }
+                                    Button("Tous les temps") { maxTimeFilter = 90; applyFilters() }
+                                    Button("Moins de 20 min (Express)") { maxTimeFilter = 20; applyFilters() }
+                                    Button("Moins de 35 min") { maxTimeFilter = 35; applyFilters() }
+                                    Button("Moins de 50 min") { maxTimeFilter = 50; applyFilters() }
                                 } label: {
                                     HStack {
                                         Image(systemName: "clock")
@@ -656,11 +1070,11 @@ struct MealGeneratorView: View {
                                 
                                 Button {
                                     isVeggieOnly.toggle()
-                                    refreshLocalRecipes()
+                                    applyFilters()
                                 } label: {
                                     HStack {
                                         Image(systemName: isVeggieOnly ? "leaf.fill" : "leaf")
-                                        Text("100% Végétarien")
+                                        Text("Végétarien")
                                     }
                                     .font(.caption)
                                     .padding(.horizontal, 10)
@@ -670,11 +1084,25 @@ struct MealGeneratorView: View {
                                     .cornerRadius(8)
                                 }
                                 
+                                Button {
+                                    Task { await fetchSurpriseRecipe() }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "dice.fill")
+                                        Text("Surprise 🎲")
+                                    }
+                                    .font(.caption)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.purple.opacity(0.15))
+                                    .foregroundColor(.purple)
+                                    .cornerRadius(8)
+                                }
+                                
                                 Spacer()
                                 
                                 Button {
-                                    refreshLocalRecipes()
-                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                    Task { await loadAutoFreezerRecipes() }
                                 } label: {
                                     Image(systemName: "arrow.clockwise")
                                         .font(.caption)
@@ -685,120 +1113,29 @@ struct MealGeneratorView: View {
                                 }
                             }
                             .padding(.horizontal)
-                        } else if currentTabSection == .theMealDB {
-                            VStack(spacing: 8) {
-                                HStack(spacing: 8) {
-                                    HStack {
-                                        Image(systemName: "magnifyingglass")
-                                            .foregroundColor(.secondary)
-                                        TextField("Ingrédient ou plat (ex: Poulet, Salmon, Pasta)...", text: $onlineSearchQuery)
-                                            .onSubmit {
-                                                Task { await searchTheMealDB() }
-                                            }
-                                        if !onlineSearchQuery.isEmpty {
-                                            Button {
-                                                onlineSearchQuery = ""
-                                            } label: {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .foregroundColor(.secondary)
-                                            }
-                                        }
-                                    }
-                                    .padding(8)
-                                    .background(Color(UIColor.secondarySystemBackground))
-                                    .cornerRadius(10)
-                                    
-                                    Button {
-                                        Task { await searchTheMealDB() }
-                                    } label: {
-                                        Text("Chercher")
-                                            .font(.caption)
-                                            .bold()
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
-                                            .background(Color.cyan)
-                                            .foregroundColor(.white)
-                                            .cornerRadius(8)
-                                    }
-                                    .disabled(isFetchingOnline)
-                                }
-                                
-                                HStack(spacing: 8) {
-                                    Button {
-                                        Task { await fetchAutoTheMealDBFromStock() }
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "sparkles")
-                                            Text("Suggérer selon mon stock")
-                                        }
-                                        .font(.caption2)
-                                        .bold()
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 5)
-                                        .background(Color.orange.opacity(0.15))
-                                        .foregroundColor(.orange)
-                                        .cornerRadius(6)
-                                    }
-                                    
-                                    Button {
-                                        Task { await fetchRandomTheMealDB() }
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "dice.fill")
-                                            Text("Surprise TheMealDB")
-                                        }
-                                        .font(.caption2)
-                                        .bold()
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 5)
-                                        .background(Color.purple.opacity(0.15))
-                                        .foregroundColor(.purple)
-                                        .cornerRadius(6)
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    if isFetchingOnline {
-                                        ProgressView()
-                                            .scaleEffect(0.8)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
                         }
                     }
                     .padding(.bottom, 6)
                     
-                    // Liste de contenu selon l'onglet
+                    // Contenu principal
                     Group {
                         switch currentTabSection {
-                        case .antiWaste:
-                            if localRecipes.isEmpty {
-                                emptyStateView(
-                                    icon: "sparkles",
-                                    title: "Aucune recette locale trouvée",
-                                    message: inventory.items.isEmpty ? "Ajoutez des aliments à votre inventaire pour générer des recettes." : "Modifiez les filtres de temps pour voir plus d'idées."
-                                )
-                            } else {
-                                recipeListView(recipes: localRecipes)
-                            }
-                            
-                        case .theMealDB:
-                            if isFetchingOnline && onlineMealDBRecipes.isEmpty {
+                        case .suggestions:
+                            if isLoading && suggestedRecipes.isEmpty {
                                 VStack(spacing: 16) {
                                     Spacer()
-                                    ProgressView("Chargement depuis TheMealDB...")
+                                    ProgressView("Analyse de votre congélateur & génération...")
                                         .font(.subheadline)
                                     Spacer()
                                 }
-                            } else if onlineMealDBRecipes.isEmpty {
+                            } else if suggestedRecipes.isEmpty {
                                 emptyStateView(
-                                    icon: "globe.europe.africa",
-                                    title: "Recettes TheMealDB",
-                                    message: "Recherchez un ingrédient ou appuyez sur 'Suggérer selon mon stock' pour charger des recettes mondiales en ligne."
+                                    icon: "sparkles",
+                                    title: "Aucune recette trouvée",
+                                    message: inventory.items.isEmpty ? "Ajoutez des aliments à votre congélateur pour obtenir des recettes adaptées." : "Modifiez vos filtres ou effectuez une autre recherche."
                                 )
                             } else {
-                                recipeListView(recipes: onlineMealDBRecipes)
+                                recipeListView(recipes: filteredRecipes(suggestedRecipes))
                             }
                             
                         case .favorites:
@@ -815,12 +1152,11 @@ struct MealGeneratorView: View {
                     }
                 }
             }
-            .navigationTitle("Recettes & TheMealDB")
+            .navigationTitle("Recettes Anti-Gaspi")
             .onAppear {
                 loadFavorites()
-                refreshLocalRecipes()
-                if onlineMealDBRecipes.isEmpty && !inventory.items.isEmpty {
-                    Task { await fetchAutoTheMealDBFromStock() }
+                if suggestedRecipes.isEmpty {
+                    Task { await loadAutoFreezerRecipes() }
                 }
             }
             .overlay(
@@ -854,7 +1190,25 @@ struct MealGeneratorView: View {
         }
     }
     
-    // MARK: - Vues Réutilisables
+    // MARK: - Filtres & Vues Réutilisables
+    
+    private func filteredRecipes(_ source: [AntiWasteRecipe]) -> [AntiWasteRecipe] {
+        var list = source
+        if maxTimeFilter < 90 {
+            list = list.filter { ($0.prepTimeMinutes + $0.cookTimeMinutes) <= maxTimeFilter }
+        }
+        if isVeggieOnly {
+            list = list.filter { recipe in
+                let cat = recipe.category.lowercased()
+                return cat.contains("végé") || cat.contains("accompagnement") || cat.contains("four") || cat.contains("dessert")
+            }
+        }
+        return list
+    }
+    
+    private func applyFilters() {
+        // Déclenche le rafraîchissement de l'affichage via @State
+    }
     
     @ViewBuilder
     private func recipeListView(recipes: [AntiWasteRecipe]) -> some View {
@@ -892,56 +1246,77 @@ struct MealGeneratorView: View {
         }
     }
     
-    // MARK: - Logique Métier
+    // MARK: - Logique de Génération Automatique
     
-    private func refreshLocalRecipes() {
-        localRecipes = RecipeEngine.generateRecipes(
-            from: inventory.items,
-            maxTimeMinutes: maxTimeFilter >= 90 ? nil : maxTimeFilter,
-            isVeggieOnly: isVeggieOnly
-        )
-    }
-    
-    private func searchTheMealDB() async {
-        guard !onlineSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        isFetchingOnline = true
+    private func loadAutoFreezerRecipes() async {
+        isLoading = true
+        
         let stockNames = inventory.items.map { $0.name }
-        let results = await TheMealDBService.shared.searchMeals(query: onlineSearchQuery, matchedStockNames: stockNames)
-        DispatchQueue.main.async {
-            self.onlineMealDBRecipes = results
-            self.isFetchingOnline = false
-            if results.isEmpty {
-                self.triggerToast("Aucune recette TheMealDB trouvée pour '\(self.onlineSearchQuery)'")
+        var collectedRecipes: [AntiWasteRecipe] = []
+        
+        // 1. Interroger l'API pour les produits les plus urgents
+        let sortedByExpiry = inventory.items.sorted { $0.daysUntilExpiry < $1.daysUntilExpiry }
+        let topUrgentItems = Array(sortedByExpiry.prefix(4))
+        
+        for item in topUrgentItems {
+            let onlineResults = await TheMealDBService.shared.searchMeals(query: item.name, matchedStockNames: stockNames)
+            for r in onlineResults {
+                if !collectedRecipes.contains(where: { $0.title == r.title }) {
+                    collectedRecipes.append(r)
+                }
             }
+        }
+        
+        // 2. Si aucune recette en ligne n'est trouvée (ou hors-ligne), générer les recettes locales anti-gaspi
+        let localBackup = LocalRecipeEngine.generateRecipes(from: inventory.items)
+        for r in localBackup {
+            if !collectedRecipes.contains(where: { $0.title == r.title }) {
+                collectedRecipes.append(r)
+            }
+        }
+        
+        DispatchQueue.main.async {
+            self.suggestedRecipes = collectedRecipes
+            self.isLoading = false
         }
     }
     
-    private func fetchAutoTheMealDBFromStock() async {
-        guard !inventory.items.isEmpty else { return }
-        isFetchingOnline = true
-        let urgentItem = inventory.items.sorted { $0.daysUntilExpiry < $1.daysUntilExpiry }.first?.name ?? "Chicken"
+    private func searchCustomRecipe() async {
+        guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isLoading = true
         let stockNames = inventory.items.map { $0.name }
-        let results = await TheMealDBService.shared.searchMeals(query: urgentItem, matchedStockNames: stockNames)
+        let results = await TheMealDBService.shared.searchMeals(query: searchQuery, matchedStockNames: stockNames)
+        
         DispatchQueue.main.async {
             if !results.isEmpty {
-                self.onlineMealDBRecipes = results
+                self.suggestedRecipes = results
+            } else {
+                // Recherche dans les recettes locales
+                let localFiltered = LocalRecipeEngine.generateRecipes(from: self.inventory.items)
+                    .filter { $0.title.localizedCaseInsensitiveContains(self.searchQuery) ||
+                              $0.matchedInventoryItemNames.contains(where: { $0.localizedCaseInsensitiveContains(self.searchQuery) }) }
+                if !localFiltered.isEmpty {
+                    self.suggestedRecipes = localFiltered
+                } else {
+                    self.triggerToast("Aucune recette trouvée pour '\(self.searchQuery)'")
+                }
             }
-            self.isFetchingOnline = false
+            self.isLoading = false
         }
     }
     
-    private func fetchRandomTheMealDB() async {
-        isFetchingOnline = true
+    private func fetchSurpriseRecipe() async {
+        isLoading = true
         let stockNames = inventory.items.map { $0.name }
-        if let randomRecipe = await TheMealDBService.shared.fetchRandomMeal(matchedStockNames: stockNames) {
+        if let surprise = await TheMealDBService.shared.fetchRandomMeal(matchedStockNames: stockNames) {
             DispatchQueue.main.async {
-                self.onlineMealDBRecipes = [randomRecipe] + self.onlineMealDBRecipes.filter { $0.title != randomRecipe.title }
-                self.isFetchingOnline = false
-                self.triggerToast("Nouvelle recette TheMealDB découverte 🎲")
+                self.suggestedRecipes = [surprise] + self.suggestedRecipes.filter { $0.title != surprise.title }
+                self.isLoading = false
+                self.triggerToast("Nouvelle recette surprise découverte 🎲")
             }
         } else {
             DispatchQueue.main.async {
-                self.isFetchingOnline = false
+                self.isLoading = false
             }
         }
     }
@@ -959,9 +1334,8 @@ struct MealGeneratorView: View {
         if consumedNames.isEmpty {
             triggerToast("Cuisiné ! Bon appétit 🍽️")
         } else {
-            triggerToast("Cuisiné ! Stocks déduits : \(consumedNames.joined(separator: ", "))")
+            triggerToast("Cuisiné ! Déstocké : \(consumedNames.joined(separator: ", "))")
         }
-        refreshLocalRecipes()
     }
     
     private func toggleFavorite(_ recipe: AntiWasteRecipe) {
@@ -991,14 +1365,14 @@ struct MealGeneratorView: View {
     }
     
     private func shareRecipe(_ recipe: AntiWasteRecipe) {
-        var text = "🍳 Recette Congelo : \(recipe.title)\n"
+        var text = "🍳 Recette Anti-Gaspi : \(recipe.title)\n"
         if let area = recipe.area {
-            text += "🌍 Origine : \(area)\n"
+            text += "🌍 Cuisine : \(area)\n"
         }
         text += "⏱️ Préparation : \(recipe.prepTimeMinutes) min • Cuisson : \(recipe.cookTimeMinutes) min • \(recipe.servings) pers.\n\n"
         
         if !recipe.matchedInventoryItemNames.isEmpty {
-            text += "❄️ Ingrédients du congélateur :\n"
+            text += "❄️ Du congélateur :\n"
             for item in recipe.matchedInventoryItemNames {
                 text += "• \(item)\n"
             }
@@ -1016,10 +1390,10 @@ struct MealGeneratorView: View {
         }
         
         if let yt = recipe.youtubeURL, !yt.isEmpty {
-            text += "\n📺 Vidéo : \(yt)\n"
+            text += "\n📺 Vidéo tutoriel : \(yt)\n"
         }
         
-        text += "\n💡 Astuce : \(recipe.chefTip)"
+        text += "\n💡 Astuce Anti-Gaspi : \(recipe.chefTip)"
         shareSheetItem = text
     }
     
@@ -1032,35 +1406,7 @@ struct MealGeneratorView: View {
     }
 }
 
-struct ShareableText: Identifiable {
-    var id = UUID()
-    var text: String
-}
-
-struct FeatureBenefitRow: View {
-    let icon: String
-    let title: String
-    let description: String
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundColor(.cyan)
-                .font(.title3)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption)
-                    .bold()
-                Text(description)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-}
-
-// MARK: - Carte Visuelle d'une Recette
+// MARK: - Carte Visuelle d'une Recette Anti-Gaspi
 
 struct RecipeCardView: View {
     let recipe: AntiWasteRecipe
@@ -1082,17 +1428,17 @@ struct RecipeCardView: View {
                             image
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: 60, height: 60)
+                                .frame(width: 65, height: 65)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                         case .failure:
                             Text(recipe.emoji)
-                                .font(.system(size: 32))
-                                .frame(width: 60, height: 60)
+                                .font(.system(size: 34))
+                                .frame(width: 65, height: 65)
                                 .background(Color.cyan.opacity(0.12))
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                         case .empty:
                             ProgressView()
-                                .frame(width: 60, height: 60)
+                                .frame(width: 65, height: 65)
                                 .background(Color.secondary.opacity(0.1))
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                         @unknown default:
@@ -1101,31 +1447,17 @@ struct RecipeCardView: View {
                     }
                 } else {
                     Text(recipe.emoji)
-                        .font(.system(size: 32))
-                        .frame(width: 60, height: 60)
+                        .font(.system(size: 34))
+                        .frame(width: 65, height: 65)
                         .background(Color.cyan.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(recipe.title)
-                            .font(.headline)
-                            .bold()
-                            .lineLimit(2)
-                        
-                        Spacer()
-                        
-                        if recipe.isOnlineTheMealDB {
-                            Text("TheMealDB")
-                                .font(.system(size: 9, weight: .bold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.purple.opacity(0.15))
-                                .foregroundColor(.purple)
-                                .cornerRadius(4)
-                        }
-                    }
+                    Text(recipe.title)
+                        .font(.headline)
+                        .bold()
+                        .lineLimit(2)
                     
                     HStack(spacing: 6) {
                         if let area = recipe.area, !area.isEmpty {
@@ -1145,6 +1477,8 @@ struct RecipeCardView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 }
+                
+                Spacer()
                 
                 Button(action: onToggleFav) {
                     Image(systemName: isFav ? "heart.fill" : "heart")
@@ -1226,7 +1560,7 @@ struct RecipeCardView: View {
                     }
                 }
                 
-                // Astuce anti-gaspi ou lien vidéo
+                // Vidéo ou astuce
                 if let yt = recipe.youtubeURL, let ytURL = URL(string: yt) {
                     Link(destination: ytURL) {
                         HStack(spacing: 6) {
@@ -1303,5 +1637,33 @@ struct RecipeCardView: View {
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .cornerRadius(14)
         .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+    }
+}
+
+struct ShareableText: Identifiable {
+    var id = UUID()
+    var text: String
+}
+
+struct FeatureBenefitRow: View {
+    let icon: String
+    let title: String
+    let description: String
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(.cyan)
+                .font(.title3)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .bold()
+                Text(description)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
     }
 }

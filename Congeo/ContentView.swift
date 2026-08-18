@@ -1671,6 +1671,12 @@ struct ObjectFinderView: View {
                         .padding(8)
                         .background(Color.secondary.opacity(0.1))
                         .cornerRadius(8)
+                        .onChange(of: selectedItemID) { _ in
+                            // Réinitialiser la détection lors du changement d'article
+                            targetFound = false
+                            boundingBox = nil
+                            lockedSnapshot = nil
+                        }
                     }
                     .padding(.horizontal)
                     
@@ -1678,11 +1684,13 @@ struct ObjectFinderView: View {
                     ZStack {
                         RealVisionCameraView(
                             targetKeywords: getKeywords(for: selectedItem),
-                            onTargetMatched: { matchedText, rect in
+                            isLocked: targetFound,
+                            onTargetMatched: { matchedText, expandedRect, snapshot in
                                 if !targetFound {
                                     targetFound = true
                                     detectedTargetText = matchedText
-                                    boundingBox = rect
+                                    boundingBox = expandedRect
+                                    lockedSnapshot = snapshot
                                     AudioServicesPlaySystemSound(1057)
                                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                                 }
@@ -1694,7 +1702,18 @@ struct ObjectFinderView: View {
                                 .stroke(targetFound ? Color.green : Color.cyan.opacity(0.5), lineWidth: 3)
                         )
                         
-                        // Encadrement visuel direct
+                        // Image gelée verrouillée pour garder la vue fixe même si la caméra bouge
+                        if targetFound, let snapshot = lockedSnapshot {
+                            Image(uiImage: snapshot)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(height: 340)
+                                .clipped()
+                                .cornerRadius(16)
+                                .transition(.opacity)
+                        }
+                        
+                        // Encadrement vert englobant l'ensemble du produit
                         if targetFound, let rect = boundingBox {
                             GeometryReader { geo in
                                 let w = geo.size.width * rect.width
@@ -1702,42 +1721,81 @@ struct ObjectFinderView: View {
                                 let x = geo.size.width * rect.origin.x
                                 let y = geo.size.height * (1.0 - rect.origin.y - rect.height)
                                 
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.green, lineWidth: 4)
-                                    .frame(width: max(80, w), height: max(40, h))
-                                    .position(x: x + w/2, y: y + h/2)
-                                    .overlay(
-                                        Text("TROUVÉ : \(detectedTargetText)")
-                                            .font(.caption2)
-                                            .bold()
-                                            .padding(4)
-                                            .background(Color.green)
-                                            .foregroundColor(.black)
-                                            .cornerRadius(4)
-                                            .position(x: x + w/2, y: max(20, y))
-                                    )
+                                ZStack {
+                                    // Fond lumineux vert subtil sur le produit
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.green.opacity(0.15))
+                                        .frame(width: max(120, w), height: max(100, h))
+                                    
+                                    // Rectangle de cadrage du produit complet
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.green, lineWidth: 4)
+                                        .frame(width: max(120, w), height: max(100, h))
+                                        .shadow(color: Color.green.opacity(0.6), radius: 8, x: 0, y: 0)
+                                    
+                                    // Coins de ciblage haute précision
+                                    TargetCornerBrackets(width: max(120, w), height: max(100, h))
+                                    
+                                    // Badge supérieur : Nom identifié
+                                    VStack(spacing: 4) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "checkmark.seal.fill")
+                                                .foregroundColor(.black)
+                                            Text("PRODUIT LOCALISÉ : \(selectedItem?.name ?? detectedTargetText)")
+                                                .font(.caption2)
+                                                .bold()
+                                                .foregroundColor(.black)
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.green)
+                                        .cornerRadius(6)
+                                        .shadow(radius: 3)
+                                        
+                                        Spacer()
+                                        
+                                        // Badge inférieur : Verrouillage persistant
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "lock.fill")
+                                                .font(.system(size: 9))
+                                            Text("Cible verrouillée à l'écran")
+                                                .font(.system(size: 10, weight: .bold))
+                                        }
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.black.opacity(0.75))
+                                        .foregroundColor(.green)
+                                        .cornerRadius(4)
+                                    }
+                                    .frame(width: max(120, w), height: max(100, h) + 36)
+                                }
+                                .position(x: x + w/2, y: y + h/2)
                             }
                         }
                         
-                        // Message overlay
+                        // Message overlay en bas du viseur
                         VStack {
                             Spacer()
                             HStack {
                                 Image(systemName: targetFound ? "checkmark.circle.fill" : "eye.fill")
                                     .foregroundColor(targetFound ? .green : .white)
-                                Text(targetFound ? "Produit repéré avec succès !" : "Balayez le congélateur avec la caméra...")
+                                Text(targetFound ? "Produit repéré et verrouillé !" : "Balayez le congélateur avec la caméra...")
                                     .font(.caption)
                                     .bold()
                                     .foregroundColor(.white)
                                 Spacer()
                                 if targetFound {
                                     Button("Rechercher à nouveau") {
-                                        targetFound = false
-                                        boundingBox = nil
+                                        withAnimation {
+                                            targetFound = false
+                                            boundingBox = nil
+                                            lockedSnapshot = nil
+                                        }
                                     }
                                     .font(.caption2)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
+                                    .bold()
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
                                     .background(Color.white)
                                     .foregroundColor(.black)
                                     .cornerRadius(6)
@@ -1752,7 +1810,7 @@ struct ObjectFinderView: View {
                     .frame(height: 340)
                     .padding(.horizontal)
                     
-                    Text("La caméra analyse en temps réel les emballages (texte, marques, codes) pour localiser précisément l'article dans vos tiroirs.")
+                    Text("L'IA détecte l'emballage et verrouille le contour vert sur le produit sélectionné.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -1770,6 +1828,8 @@ struct ObjectFinderView: View {
         }
     }
     
+    @State private var lockedSnapshot: UIImage? = nil
+    
     private func getKeywords(for item: FoodItem?) -> [String] {
         guard let item = item else { return [] }
         var words: [String] = []
@@ -1783,10 +1843,59 @@ struct ObjectFinderView: View {
     }
 }
 
+// MARK: - Coins de Ciblage Visuel
+struct TargetCornerBrackets: View {
+    let width: CGFloat
+    let height: CGFloat
+    let bracketLen: CGFloat = 16
+    let bracketThickness: CGFloat = 3
+    
+    var body: some View {
+        ZStack {
+            // Haut gauche
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: bracketLen))
+                path.addLine(to: CGPoint(x: 0, y: 0))
+                path.addLine(to: CGPoint(x: bracketLen, y: 0))
+            }
+            .stroke(Color.white, lineWidth: bracketThickness)
+            .offset(x: -width/2, y: -height/2)
+            
+            // Haut droit
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: bracketLen))
+                path.addLine(to: CGPoint(x: 0, y: 0))
+                path.addLine(to: CGPoint(x: -bracketLen, y: 0))
+            }
+            .stroke(Color.white, lineWidth: bracketThickness)
+            .offset(x: width/2, y: -height/2)
+            
+            // Bas gauche
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: -bracketLen))
+                path.addLine(to: CGPoint(x: 0, y: 0))
+                path.addLine(to: CGPoint(x: bracketLen, y: 0))
+            }
+            .stroke(Color.white, lineWidth: bracketThickness)
+            .offset(x: -width/2, y: height/2)
+            
+            // Bas droit
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: -bracketLen))
+                path.addLine(to: CGPoint(x: 0, y: 0))
+                path.addLine(to: CGPoint(x: -bracketLen, y: 0))
+            }
+            .stroke(Color.white, lineWidth: bracketThickness)
+            .offset(x: width/2, y: height/2)
+        }
+    }
+}
+
 // Vue Vision Live OCR
 struct RealVisionCameraView: UIViewControllerRepresentable {
     var targetKeywords: [String]
-    var onTargetMatched: (String, CGRect) -> Void
+    var isLocked: Bool
+    var onTargetMatched: (String, CGRect, UIImage?) -> Void
     
     func makeUIViewController(context: Context) -> VisionCameraViewController {
         let vc = VisionCameraViewController()
@@ -1798,12 +1907,19 @@ struct RealVisionCameraView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: VisionCameraViewController, context: Context) {
         uiViewController.targetKeywords = targetKeywords
         uiViewController.onMatch = onTargetMatched
+        if !isLocked && !uiViewController.isRunning {
+            uiViewController.restartScanning()
+        }
     }
 }
 
 class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
     var targetKeywords: [String] = []
-    var onMatch: ((String, CGRect) -> Void)?
+    var onMatch: ((String, CGRect, UIImage?) -> Void)?
+    
+    var isRunning: Bool {
+        return captureSession?.isRunning ?? false
+    }
     
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
@@ -1814,6 +1930,15 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
         super.viewDidLoad()
         view.backgroundColor = .black
         checkCameraPermissionsAndSetup()
+    }
+    
+    func restartScanning() {
+        isProcessing = false
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if let session = self?.captureSession, !session.isRunning {
+                session.startRunning()
+            }
+        }
     }
     
     private func checkCameraPermissionsAndSetup() {
@@ -1913,6 +2038,31 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
         previewLayer?.frame = view.layer.bounds
     }
     
+    // Calcul de la boîte englobante de l'emballage complet du produit
+    static func expandToProductBoundingBox(from textRect: CGRect) -> CGRect {
+        let textCenterX = textRect.midX
+        let textCenterY = textRect.midY
+        
+        // Largeur et hauteur généreuses pour englober l'ensemble du produit/paquet
+        let productWidth: CGFloat = max(0.65, min(0.85, textRect.width * 3.0))
+        let productHeight: CGFloat = max(0.50, min(0.75, textRect.height * 6.0))
+        
+        var originX = textCenterX - (productWidth / 2.0)
+        var originY = textCenterY - (productHeight / 2.0)
+        
+        originX = max(0.05, min(0.95 - productWidth, originX))
+        originY = max(0.05, min(0.95 - productHeight, originY))
+        
+        return CGRect(x: originX, y: originY, width: productWidth, height: productHeight)
+    }
+    
+    private func imageFromPixelBuffer(_ pixelBuffer: CVPixelBuffer) -> UIImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+    }
+    
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard !isProcessing, !targetKeywords.isEmpty else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -1920,9 +2070,9 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
         isProcessing = true
         
         let request = VNRecognizeTextRequest { [weak self] request, error in
-            defer { self?.isProcessing = false }
             guard let self = self, error == nil,
                   let observations = request.results as? [VNRecognizedTextObservation] else {
+                self?.isProcessing = false
                 return
             }
             
@@ -1932,13 +2082,18 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
                 
                 for keyword in self.targetKeywords {
                     if recognizedString.contains(keyword) {
+                        let expandedBox = VisionCameraViewController.expandToProductBoundingBox(from: observation.boundingBox)
+                        let snapshot = self.imageFromPixelBuffer(pixelBuffer)
+                        
                         DispatchQueue.main.async {
-                            self.onMatch?(candidate.string, observation.boundingBox)
+                            self.captureSession?.stopRunning()
+                            self.onMatch?(candidate.string, expandedBox, snapshot)
                         }
                         return
                     }
                 }
             }
+            self.isProcessing = false
         }
         
         request.recognitionLevel = .fast

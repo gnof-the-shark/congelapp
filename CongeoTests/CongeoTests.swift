@@ -101,11 +101,18 @@ final class CongeoTests: XCTestCase {
         XCTAssertTrue(firstRecipe!.matchedInventoryItemNames.contains("Filet de poulet") || firstRecipe!.matchedInventoryItemNames.contains("Brocolis"))
     }
     
-    func testTheMealDBServiceTranslation() throws {
-        let service = TheMealDBService.shared
-        XCTAssertEqual(service.translateIngredientToEnglish("Poulet rôti"), "chicken")
-        XCTAssertEqual(service.translateIngredientToEnglish("Pavé de saumon"), "salmon")
-        XCTAssertEqual(service.translateIngredientToEnglish("Steak haché de boeuf"), "beef")
-        XCTAssertEqual(service.translateIngredientToEnglish("Haricots verts"), "beans")
+    func testFrenchCulinaryTranslator() throws {
+        let translator = FrenchCulinaryTranslator.shared
+        XCTAssertEqual(translator.translateSearchTermToEnglish("Poulet rôti"), "chicken")
+        XCTAssertEqual(translator.translateSearchTermToEnglish("Pavé de saumon"), "salmon")
+        XCTAssertEqual(translator.translateSearchTermToEnglish("Steak haché de boeuf"), "beef")
+        XCTAssertEqual(translator.translateSearchTermToEnglish("Haricots verts"), "green beans")
+        
+        XCTAssertEqual(translator.translateCategory("chicken"), "Volaille & Poulet")
+        XCTAssertEqual(translator.translateCategory("beef"), "Bœuf")
+        XCTAssertEqual(translator.translateCategory("seafood"), "Poissons & Fruits de mer")
+        
+        let translatedTitle = translator.translateTitle("Chicken Soup")
+        XCTAssertTrue(translatedTitle.contains("Poulet") || translatedTitle.contains("Soupe"))
     }
 }
