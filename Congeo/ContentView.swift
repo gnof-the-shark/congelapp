@@ -73,6 +73,10 @@ enum AppTier: String, CaseIterable, Identifiable, Codable {
         self == .family
     }
     
+    var hasSharedGroceryList: Bool {
+        self == .family
+    }
+    
     var hasAds: Bool {
         switch self {
         case .free: return true
@@ -697,10 +701,357 @@ final class FamilySharingManager: ObservableObject {
     }
 }
 
+// MARK: - Modèle d'Épicerie Partagée & Gestionnaire iCloud Réel
+
+struct GroceryItem: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var name: String
+    var quantity: Int = 1
+    var unit: String? = nil
+    var category: FoodCategory = .other
+    var isCompleted: Bool = false
+    var addedBy: String = UIDevice.current.name
+    var addedDate: Date = Date()
+    var lastModified: Date = Date()
+    var notes: String? = nil
+    var isFromAntiWasteRecipe: Bool = false
+    var recipeOriginTitle: String? = nil
+}
+
+@MainActor
+final class GroceryListManager: ObservableObject {
+    private let storageKey = "congelo_shared_grocery_list_v2"
+    private let authorKey = "congelo_grocery_user_author"
+    
+    @Published var items: [GroceryItem] = [] {
+        didSet {
+            if !isApplyingExternalUpdate {
+                saveToCloudAndLocal()
+            }
+        }
+    }
+    
+    @Published var lastSyncDate: Date? = Date()
+    @Published var isSyncing: Bool = false
+    @Published var syncStatusMessage: String = "Synchronisé avec iCloud (Famille)"
+    @Published var authorName: String = "" {
+        didSet {
+            UserDefaults.standard.set(authorName, forKey: authorKey)
+        }
+    }
+    
+    private var isApplyingExternalUpdate: Bool = false
+    
+    var uncompletedCount: Int {
+        items.filter { !$0.isCompleted }.count
+    }
+    
+    var completedCount: Int {
+        items.filter { $0.isCompleted }.count
+    }
+    
+    init() {
+        if let savedAuthor = UserDefaults.standard.string(forKey: authorKey), !savedAuthor.isEmpty {
+            self.authorName = savedAuthor
+        } else {
+            self.authorName = UIDevice.current.name
+        }
+        
+        loadInitialData()
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(ubiquitousStoreDidChangeExternally),
+            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: NSUbiquitousKeyValueStore.default
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    @objc private func ubiquitousStoreDidChangeExternally(notification: Notification) {
+        Task { @MainActor in
+            self.mergeFromCloud()
+        }
+    }
+    
+    @objc private func handleAppForeground() {
+        Task { @MainActor in
+            self.forceSync()
+        }
+    }
+    
+    private func loadInitialData() {
+        // 1. Essayer depuis NSUbiquitousKeyValueStore (iCloud)
+        if let cloudData = NSUbiquitousKeyValueStore.default.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([GroceryItem].self, from: cloudData) {
+            self.items = decoded
+            self.lastSyncDate = Date()
+            self.syncStatusMessage = "Synchronisé via iCloud (Famille)"
+            return
+        }
+        
+        // 2. Essayer depuis le cache local (UserDefaults)
+        if let localData = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([GroceryItem].self, from: localData) {
+            self.items = decoded
+            self.lastSyncDate = Date()
+            self.syncStatusMessage = "Chargé depuis le cache local"
+            return
+        }
+        
+        // 3. Exemple initial accueillant pour la famille
+        let defaultAuthor = authorName.isEmpty ? "Famille" : authorName
+        self.items = [
+            GroceryItem(name: "Lait d'avoine ou demi-écrémé", quantity: 2, unit: "brique(s)", category: .dairy, addedBy: defaultAuthor, notes: "Pour le petit-déjeuner"),
+            GroceryItem(name: "Beurre doux", quantity: 1, unit: "plaquette", category: .dairy, addedBy: defaultAuthor),
+            GroceryItem(name: "Courgettes fraîches", quantity: 3, unit: "unités", category: .vegetables, addedBy: defaultAuthor, notes: "Pour accompagner les viandes"),
+            GroceryItem(name: "Filets de poulet", quantity: 4, unit: "pièces", category: .meat, isCompleted: true, addedBy: defaultAuthor, notes: "Acheté au supermarché")
+        ]
+        saveToCloudAndLocal()
+    }
+    
+    private func saveToCloudAndLocal() {
+        guard let encoded = try? JSONEncoder().encode(items) else { return }
+        
+        // Synchronisation iCloud temps réel
+        NSUbiquitousKeyValueStore.default.set(encoded, forKey: storageKey)
+        NSUbiquitousKeyValueStore.default.synchronize()
+        
+        // Cache local immédiat
+        UserDefaults.standard.set(encoded, forKey: storageKey)
+        self.lastSyncDate = Date()
+        self.syncStatusMessage = "Synchronisé avec iCloud à \(Date().formatted(date: .omitted, time: .shortened))"
+    }
+    
+    func mergeFromCloud() {
+        guard let cloudData = NSUbiquitousKeyValueStore.default.data(forKey: storageKey),
+              let cloudItems = try? JSONDecoder().decode([GroceryItem].self, from: cloudData) else {
+            return
+        }
+        
+        // Fusion intelligente par ID et date de modification
+        var mergedDict: [UUID: GroceryItem] = [:]
+        for item in self.items {
+            mergedDict[item.id] = item
+        }
+        
+        for cloudItem in cloudItems {
+            if let existing = mergedDict[cloudItem.id] {
+                // Garder la version la plus récente
+                if cloudItem.lastModified >= existing.lastModified {
+                    mergedDict[cloudItem.id] = cloudItem
+                }
+            } else {
+                mergedDict[cloudItem.id] = cloudItem
+            }
+        }
+        
+        let sorted = Array(mergedDict.values).sorted {
+            if $0.isCompleted != $1.isCompleted {
+                return !$0.isCompleted && $1.isCompleted
+            }
+            return $0.addedDate > $1.addedDate
+        }
+        
+        self.isApplyingExternalUpdate = true
+        self.items = sorted
+        self.isApplyingExternalUpdate = false
+        
+        if let encoded = try? JSONEncoder().encode(sorted) {
+            UserDefaults.standard.set(encoded, forKey: storageKey)
+        }
+        
+        self.lastSyncDate = Date()
+        self.syncStatusMessage = "Mise à jour reçue d'un membre de la famille"
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+    
+    func forceSync() {
+        isSyncing = true
+        NSUbiquitousKeyValueStore.default.synchronize()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            self.mergeFromCloud()
+            self.isSyncing = false
+            self.syncStatusMessage = "Synchronisation iCloud vérifiée"
+        }
+    }
+    
+    @discardableResult
+    func addItem(
+        name: String,
+        quantity: Int = 1,
+        unit: String? = nil,
+        category: FoodCategory? = nil,
+        notes: String? = nil,
+        isFromRecipe: Bool = false,
+        recipeTitle: String? = nil
+    ) -> Bool {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return false }
+        
+        let cat = category ?? FoodCategory.detect(from: cleaned)
+        let author = authorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? UIDevice.current.name : authorName
+        
+        let newItem = GroceryItem(
+            name: cleaned,
+            quantity: max(1, quantity),
+            unit: unit?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? unit : nil,
+            category: cat,
+            isCompleted: false,
+            addedBy: author,
+            addedDate: Date(),
+            lastModified: Date(),
+            notes: notes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? notes : nil,
+            isFromAntiWasteRecipe: isFromRecipe,
+            recipeOriginTitle: recipeTitle
+        )
+        
+        items.insert(newItem, at: 0)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        return true
+    }
+    
+    @discardableResult
+    func addMissingIngredients(from recipeTitle: String, missing: [String]) -> Int {
+        var addedCount = 0
+        let author = authorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? UIDevice.current.name : authorName
+        
+        for ing in missing {
+            let cleaned = ing.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { continue }
+            
+            let alreadyExists = items.contains { $0.name.lowercased() == cleaned.lowercased() && !$0.isCompleted }
+            if !alreadyExists {
+                let cat = FoodCategory.detect(from: cleaned)
+                let item = GroceryItem(
+                    name: cleaned,
+                    quantity: 1,
+                    unit: nil,
+                    category: cat,
+                    isCompleted: false,
+                    addedBy: author,
+                    addedDate: Date(),
+                    lastModified: Date(),
+                    notes: "Pour la recette « \(recipeTitle) »",
+                    isFromAntiWasteRecipe: true,
+                    recipeOriginTitle: recipeTitle
+                )
+                items.insert(item, at: 0)
+                addedCount += 1
+            }
+        }
+        
+        if addedCount > 0 {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+        return addedCount
+    }
+    
+    func toggleCompletion(for item: GroceryItem) {
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            items[idx].isCompleted.toggle()
+            items[idx].lastModified = Date()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+    
+    func updateQuantity(itemId: UUID, delta: Int) {
+        if let idx = items.firstIndex(where: { $0.id == itemId }) {
+            let newQty = items[idx].quantity + delta
+            if newQty >= 1 {
+                items[idx].quantity = newQty
+                items[idx].lastModified = Date()
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+    }
+    
+    func deleteItem(withId id: UUID) {
+        items.removeAll(where: { $0.id == id })
+    }
+    
+    func deleteItems(at offsets: IndexSet, in list: [GroceryItem]) {
+        let idsToDelete = offsets.map { list[$0].id }
+        items.removeAll(where: { idsToDelete.contains($0.id) })
+    }
+    
+    func clearCompleted() {
+        items.removeAll(where: { $0.isCompleted })
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+    
+    func transferToFreezer(
+        item: GroceryItem,
+        location: String,
+        expiryDays: Int,
+        inventory: InventoryManager,
+        license: LicenseManager
+    ) -> Bool {
+        let expiryDate = Date().addingTimeInterval(Double(expiryDays) * 86400)
+        let success = inventory.addItem(
+            name: item.name,
+            quantity: item.quantity,
+            location: location,
+            expiryDate: expiryDate,
+            category: item.category,
+            notes: "Transféré depuis la liste d'épicerie partagée iCloud",
+            license: license
+        )
+        
+        if success {
+            deleteItem(withId: item.id)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            return true
+        }
+        return false
+    }
+    
+    func exportGroceryListText() -> String {
+        let pending = items.filter { !$0.isCompleted }
+        let completed = items.filter { $0.isCompleted }
+        
+        var text = "🛒 LISTE D'ÉPICERIE FAMILIALE CONGÉLO\n"
+        text += "Date : \(Date().formatted(date: .abbreviated, time: .shortened))\n\n"
+        
+        if !pending.isEmpty {
+            text += "À ACHETER (\(pending.count)) :\n"
+            for item in pending {
+                let unitStr = item.unit != nil ? " \(item.unit!)" : ""
+                let authorStr = " (par \(item.addedBy))"
+                text += "⬜ [ ] \(item.name) x\(item.quantity)\(unitStr)\(authorStr)\n"
+                if let note = item.notes {
+                    text += "    ↳ Note : \(note)\n"
+                }
+            }
+            text += "\n"
+        }
+        
+        if !completed.isEmpty {
+            text += "DÉJÀ ACHETÉ (\(completed.count)) :\n"
+            for item in completed {
+                text += "✅ [x] \(item.name) x\(item.quantity)\n"
+            }
+        }
+        
+        return text
+    }
+}
+
 // MARK: - Vue Principale & Tab Navigation
 
 struct MainTabView: View {
     @EnvironmentObject var license: LicenseManager
+    @EnvironmentObject var grocery: GroceryListManager
     
     var body: some View {
         TabView {
@@ -708,6 +1059,12 @@ struct MainTabView: View {
                 .tabItem {
                     Label("Inventaire", systemImage: "snowflake")
                 }
+            
+            GroceryListView()
+                .tabItem {
+                    Label("Épicerie", systemImage: "cart.fill")
+                }
+                .badge(grocery.uncompletedCount > 0 ? grocery.uncompletedCount : 0)
             
             ObjectFinderView()
                 .tabItem {
@@ -2533,6 +2890,882 @@ struct HardwareView: View {
     }
 }
 
+// MARK: - 5.5. Liste d'Épicerie Familiale Partagée iCloud Réel
+
+struct GroceryListView: View {
+    @EnvironmentObject var grocery: GroceryListManager
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    
+    @State private var selectedFilter: GroceryFilter = .all
+    @State private var selectedCategory: FoodCategory? = nil
+    @State private var itemToTransfer: GroceryItem? = nil
+    @State private var showTransferSheet = false
+    @State private var showShareSheet = false
+    @State private var showAuthorSheet = false
+    @State private var showClearCompletedAlert = false
+    @State private var showDemoMode = false
+    @State private var exportText = ""
+    
+    enum GroceryFilter: String, CaseIterable, Identifiable {
+        case all = "Tous"
+        case pending = "À acheter"
+        case completed = "Achetés"
+        
+        var id: String { rawValue }
+    }
+    
+    private var filteredItems: [GroceryItem] {
+        grocery.items.filter { item in
+            let matchesCategory = selectedCategory == nil || item.category == selectedCategory
+            let matchesFilter: Bool
+            switch selectedFilter {
+            case .all: matchesFilter = true
+            case .pending: matchesFilter = !item.isCompleted
+            case .completed: matchesFilter = item.isCompleted
+            }
+            return matchesCategory && matchesFilter
+        }
+    }
+    
+    private var pendingItems: [GroceryItem] {
+        filteredItems.filter { !$0.isCompleted }
+    }
+    
+    private var completedItems: [GroceryItem] {
+        filteredItems.filter { $0.isCompleted }
+    }
+    
+    var body: some View {
+        NavigationView {
+            Group {
+                if license.currentTier.hasSharedGroceryList || showDemoMode {
+                    mainGroceryContentView
+                } else {
+                    FamilyGroceryPaywallView(onUnlockTapped: {
+                        Task { await license.purchase(tier: .family) }
+                    }, onDemoTapped: {
+                        showDemoMode = true
+                    })
+                }
+            }
+            .navigationTitle("Épicerie Familiale")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if license.currentTier.hasSharedGroceryList || showDemoMode {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            showAuthorSheet = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "person.crop.circle.badge.checkmark")
+                                Text(grocery.authorName.isEmpty ? "Auteur" : grocery.authorName)
+                                    .font(.caption)
+                                    .bold()
+                            }
+                            .foregroundColor(.cyan)
+                        }
+                    }
+                    
+                    ToolbarItemGroup(placement: .navigationBarTrailing) {
+                        Button {
+                            grocery.forceSync()
+                        } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .rotationEffect(.degrees(grocery.isSyncing ? 360 : 0))
+                                .animation(grocery.isSyncing ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: grocery.isSyncing)
+                        }
+                        
+                        Menu {
+                            Button {
+                                exportText = grocery.exportGroceryListText()
+                                showShareSheet = true
+                            } label: {
+                                Label("Partager la liste (Texte)", systemImage: "square.and.arrow.up")
+                            }
+                            
+                            Button {
+                                showAuthorSheet = true
+                            } label: {
+                                Label("Mon nom d'auteur iCloud", systemImage: "person.text.rectangle")
+                            }
+                            
+                            if grocery.completedCount > 0 {
+                                Divider()
+                                Button(role: .destructive) {
+                                    showClearCompletedAlert = true
+                                } label: {
+                                    Label("Vider les articles achetés (\(grocery.completedCount))", systemImage: "trash")
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showTransferSheet) {
+                if let item = itemToTransfer {
+                    GroceryTransferToFreezerSheet(item: item, isPresented: $showTransferSheet)
+                }
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ActivityViewController(activityItems: [exportText])
+            }
+            .sheet(isPresented: $showAuthorSheet) {
+                GroceryAuthorNameSheet(isPresented: $showAuthorSheet)
+            }
+            .alert("Vider les articles achetés ?", isPresented: $showClearCompletedAlert) {
+                Button("Annuler", role: .cancel) { }
+                Button("Supprimer", role: .destructive) {
+                    grocery.clearCompleted()
+                }
+            } message: {
+                Text("Cette action supprimera définitivement tous les articles déjà cochés comme achetés pour toute la famille.")
+            }
+        }
+    }
+    
+    private var mainGroceryContentView: some View {
+        VStack(spacing: 0) {
+            // Bannière Statut iCloud Temps Réel
+            HStack(spacing: 8) {
+                Image(systemName: "icloud.fill")
+                    .foregroundColor(.cyan)
+                    .font(.subheadline)
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text("iCloud Partage Familial")
+                            .font(.caption2)
+                            .bold()
+                        Text("• En direct")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                    }
+                    Text(grocery.syncStatusMessage)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                if grocery.isSyncing {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button {
+                        grocery.forceSync()
+                    } label: {
+                        Text("Synchro")
+                            .font(.caption2)
+                            .bold()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.cyan.opacity(0.15))
+                            .foregroundColor(.cyan)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color(UIColor.secondarySystemBackground))
+            
+            Divider()
+            
+            // Barre d'ajout rapide
+            GroceryQuickAddBar()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            
+            // Filtres (Tous / À acheter / Achetés)
+            Picker("Filtre", selection: $selectedFilter) {
+                Text("Tous (\(grocery.items.count))").tag(GroceryFilter.all)
+                Text("À acheter (\(grocery.uncompletedCount))").tag(GroceryFilter.pending)
+                Text("Achetés (\(grocery.completedCount))").tag(GroceryFilter.completed)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            
+            // Catégories rapides
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Button {
+                        withAnimation { selectedCategory = nil }
+                    } label: {
+                        Text("Toutes catégories")
+                            .font(.caption2)
+                            .bold()
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(selectedCategory == nil ? Color.cyan : Color(UIColor.secondarySystemBackground))
+                            .foregroundColor(selectedCategory == nil ? .white : .primary)
+                            .cornerRadius(12)
+                    }
+                    
+                    ForEach(FoodCategory.allCases, id: \.self) { cat in
+                        Button {
+                            withAnimation {
+                                selectedCategory = (selectedCategory == cat ? nil : cat)
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: cat.iconName)
+                                Text(cat.rawValue)
+                            }
+                            .font(.caption2)
+                            .bold()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(selectedCategory == cat ? cat.color : Color(UIColor.secondarySystemBackground))
+                            .foregroundColor(selectedCategory == cat ? .white : .primary)
+                            .cornerRadius(12)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            }
+            
+            Divider()
+            
+            // Liste des articles
+            if grocery.items.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "cart.badge.plus")
+                        .font(.system(size: 48))
+                        .foregroundColor(.cyan)
+                    Text("Votre liste d'épicerie est vide")
+                        .font(.headline)
+                    Text("Ajoutez des articles ci-dessus ou importez les ingrédients manquants depuis l'onglet Recettes Anti-Gaspi.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                    Spacer()
+                }
+            } else if filteredItems.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 36))
+                        .foregroundColor(.secondary)
+                    Text("Aucun article correspondant à ce filtre")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else {
+                List {
+                    if !pendingItems.isEmpty {
+                        Section(header: Text("🛒 À ACHETER (\(pendingItems.count))")) {
+                            ForEach(pendingItems) { item in
+                                GroceryItemRow(item: item, onTransfer: {
+                                    itemToTransfer = item
+                                    showTransferSheet = true
+                                })
+                            }
+                            .onDelete { offsets in
+                                grocery.deleteItems(at: offsets, in: pendingItems)
+                            }
+                        }
+                    }
+                    
+                    if !completedItems.isEmpty {
+                        Section(header: HStack {
+                            Text("✅ DÉJÀ ACHETÉS (\(completedItems.count))")
+                            Spacer()
+                            Button("Vider") {
+                                showClearCompletedAlert = true
+                            }
+                            .font(.caption2)
+                            .textCase(nil)
+                        }) {
+                            ForEach(completedItems) { item in
+                                GroceryItemRow(item: item, onTransfer: {
+                                    itemToTransfer = item
+                                    showTransferSheet = true
+                                })
+                            }
+                            .onDelete { offsets in
+                                grocery.deleteItems(at: offsets, in: completedItems)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+    }
+}
+
+// MARK: - Ligne d'Article d'Épicerie
+
+struct GroceryItemRow: View {
+    let item: GroceryItem
+    let onTransfer: () -> Void
+    @EnvironmentObject var grocery: GroceryListManager
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Checkbox circulaire animée
+            Button {
+                grocery.toggleCompletion(for: item)
+            } label: {
+                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(item.isCompleted ? .green : .secondary)
+            }
+            .buttonStyle(.borderless)
+            
+            // Détails de l'article
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(item.name)
+                        .font(.body)
+                        .fontWeight(item.isCompleted ? .regular : .semibold)
+                        .strikethrough(item.isCompleted, color: .secondary)
+                        .foregroundColor(item.isCompleted ? .secondary : .primary)
+                    
+                    if item.quantity > 1 || item.unit != nil {
+                        Text("x\(item.quantity)\(item.unit != nil ? " \(item.unit!)" : "")")
+                            .font(.caption)
+                            .bold()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.cyan.opacity(0.12))
+                            .foregroundColor(.cyan)
+                            .cornerRadius(6)
+                    }
+                }
+                
+                HStack(spacing: 6) {
+                    // Badge Catégorie
+                    HStack(spacing: 3) {
+                        Image(systemName: item.category.iconName)
+                        Text(item.category.rawValue)
+                    }
+                    .font(.system(size: 10))
+                    .bold()
+                    .foregroundColor(item.category.color)
+                    
+                    Text("•")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    
+                    // Auteur de l'ajout
+                    HStack(spacing: 2) {
+                        Image(systemName: "person.fill")
+                        Text(item.addedBy)
+                    }
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    
+                    // Si issu d'une recette Anti-Gaspi
+                    if item.isFromAntiWasteRecipe {
+                        Text("•")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "fork.knife")
+                            Text("Recette")
+                        }
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                    }
+                }
+                
+                if let note = item.notes {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .italic()
+                }
+            }
+            
+            Spacer()
+            
+            if item.isCompleted {
+                // Bouton direct pour ranger au congélateur
+                Button {
+                    onTransfer()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "snowflake")
+                        Text("Congélateur")
+                    }
+                    .font(.caption2)
+                    .bold()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.borderless)
+            } else {
+                // Contrôles de quantité (+ / -)
+                HStack(spacing: 8) {
+                    Button {
+                        grocery.updateQuantity(itemId: item.id, delta: -1)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                            .foregroundColor(item.quantity > 1 ? .secondary : .gray.opacity(0.3))
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(item.quantity <= 1)
+                    
+                    Text("\(item.quantity)")
+                        .font(.caption)
+                        .bold()
+                        .frame(minWidth: 16)
+                    
+                    Button {
+                        grocery.updateQuantity(itemId: item.id, delta: 1)
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .foregroundColor(.cyan)
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Barre d'Ajout Rapide d'Épicerie
+
+struct GroceryQuickAddBar: View {
+    @EnvironmentObject var grocery: GroceryListManager
+    @State private var textInput = ""
+    @State private var quantity = 1
+    @State private var selectedCategory: FoodCategory? = nil
+    
+    private let commonStaples = [
+        ("🥛 Lait", FoodCategory.dairy),
+        ("🧈 Beurre", FoodCategory.dairy),
+        ("🥖 Pain", FoodCategory.bakery),
+        ("🥚 Œufs", FoodCategory.dairy),
+        ("🧄 Ail", FoodCategory.vegetables),
+        ("🧅 Oignons", FoodCategory.vegetables),
+        ("🧀 Fromage", FoodCategory.dairy),
+        ("🍅 Tomates", FoodCategory.vegetables),
+        ("🥩 Poulet", FoodCategory.meat),
+        ("🐟 Saumon", FoodCategory.fish),
+        ("🥦 Légumes", FoodCategory.vegetables)
+    ]
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                TextField("Ajouter un aliment (ex: Poulet, Lait...)", text: $textInput)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        submitItem()
+                    }
+                
+                // Stepper quantité rapide
+                HStack(spacing: 4) {
+                    Button {
+                        if quantity > 1 { quantity -= 1 }
+                    } label: {
+                        Image(systemName: "minus")
+                            .font(.caption2)
+                            .frame(width: 22, height: 22)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .cornerRadius(4)
+                    }
+                    
+                    Text("\(quantity)")
+                        .font(.caption)
+                        .bold()
+                        .frame(minWidth: 18)
+                    
+                    Button {
+                        quantity += 1
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption2)
+                            .frame(width: 22, height: 22)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .cornerRadius(4)
+                    }
+                }
+                
+                Button {
+                    submitItem()
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray.opacity(0.4) : .cyan)
+                }
+                .disabled(textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            
+            // Suggestions d'articles courants
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(commonStaples, id: \.0) { item in
+                        Button {
+                            let cleanName = item.0.components(separatedBy: " ").last ?? item.0
+                            grocery.addItem(name: cleanName, quantity: 1, category: item.1)
+                        } label: {
+                            Text(item.0)
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(UIColor.secondarySystemBackground))
+                                .foregroundColor(.primary)
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func submitItem() {
+        let trimmed = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        grocery.addItem(name: trimmed, quantity: quantity, category: selectedCategory)
+        textInput = ""
+        quantity = 1
+        selectedCategory = nil
+    }
+}
+
+// MARK: - Feuille de Transfert Vers le Congélateur
+
+struct GroceryTransferToFreezerSheet: View {
+    let item: GroceryItem
+    @Binding var isPresented: Bool
+    @EnvironmentObject var grocery: GroceryListManager
+    @EnvironmentObject var inventory: InventoryManager
+    @EnvironmentObject var license: LicenseManager
+    
+    @State private var selectedLocation = "Maison"
+    @State private var expiryDays = 90
+    @State private var showSuccessAlert = false
+    
+    private var availableLocations: [String] {
+        inventory.visibleLocations(for: license.currentTier)
+    }
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Article à ranger")) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name)
+                                .font(.headline)
+                                .bold()
+                            Text("Quantité : x\(item.quantity)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: item.category.iconName)
+                            .foregroundColor(item.category.color)
+                            .font(.title2)
+                    }
+                }
+                
+                Section(header: Text("Emplacement du congélateur")) {
+                    Picker("Emplacement", selection: $selectedLocation) {
+                        ForEach(availableLocations, id: \.self) { loc in
+                            Text(loc).tag(loc)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                
+                Section(header: Text("Durée de conservation estimée")) {
+                    Picker("Durée", selection: $expiryDays) {
+                        Text("1 mois (30j)").tag(30)
+                        Text("3 mois (90j - Viandes/Poissons)").tag(90)
+                        Text("6 mois (180j - Plats cuisinés)").tag(180)
+                        Text("1 an (365j - Légumes/Fruits)").tag(365)
+                    }
+                    
+                    Text("Date de péremption calculée : \(Date().addingTimeInterval(Double(expiryDays) * 86400).formatted(date: .abbreviated, time: .omitted))")
+                        .font(.caption)
+                        .foregroundColor(.cyan)
+                }
+                
+                Section {
+                    Button {
+                        if grocery.transferToFreezer(
+                            item: item,
+                            location: selectedLocation,
+                            expiryDays: expiryDays,
+                            inventory: inventory,
+                            license: license
+                        ) {
+                            isPresented = false
+                        }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Image(systemName: "snowflake")
+                            Text("Confirmer le transfert au congélateur")
+                                .bold()
+                            Spacer()
+                        }
+                        .foregroundColor(.white)
+                    }
+                    .listRowBackground(Color.cyan)
+                }
+            }
+            .navigationTitle("Ranger au Congélateur")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Annuler") {
+                        isPresented = false
+                    }
+                }
+            }
+            .onAppear {
+                if let firstLoc = availableLocations.first {
+                    selectedLocation = firstLoc
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Feuille Nom d'Auteur iCloud
+
+struct GroceryAuthorNameSheet: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject var grocery: GroceryListManager
+    @State private var nameInput = ""
+    
+    private let commonNames = ["Papa", "Maman", "Christophe", "Julie", "Thomas", "Marie", "Maison"]
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Votre Nom dans la Famille")) {
+                    TextField("Ex: Papa, Maman, Christophe...", text: $nameInput)
+                    
+                    Text("Ce nom sera affiché à côté des articles que vous ajoutez sur la liste partagée iCloud.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Section(header: Text("Suggestions rapides")) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(commonNames, id: \.self) { name in
+                                Button(name) {
+                                    nameInput = name
+                                }
+                                .buttonStyle(.bordered)
+                                .font(.caption)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Auteur des Courses")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Annuler") {
+                        isPresented = false
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Enregistrer") {
+                        grocery.authorName = nameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        isPresented = false
+                    }
+                    .bold()
+                }
+            }
+            .onAppear {
+                nameInput = grocery.authorName
+            }
+        }
+    }
+}
+
+// MARK: - Écran de Présentation & Déblocage Licence Famille
+
+struct FamilyGroceryPaywallView: View {
+    let onUnlockTapped: () -> Void
+    let onDemoTapped: () -> Void
+    @EnvironmentObject var license: LicenseManager
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Illustration Header
+                VStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(colors: [.cyan.opacity(0.2), .blue.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 90, height: 90)
+                        
+                        Image(systemName: "cart.fill.badge.plus")
+                            .font(.system(size: 40))
+                            .foregroundColor(.cyan)
+                    }
+                    
+                    Text("Liste d'Épicerie Familiale Partagée")
+                        .font(.title2)
+                        .bold()
+                        .multilineTextAlignment(.center)
+                    
+                    Text("Modifiable en direct par toute la famille via iCloud • Réservé à la Licence Famille")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .padding(.top, 20)
+                
+                // Simulation visuelle live sync
+                VStack(spacing: 10) {
+                    HStack {
+                        Image(systemName: "icloud.fill")
+                            .foregroundColor(.cyan)
+                        Text("Synchronisation en Direct iCloud")
+                            .font(.caption)
+                            .bold()
+                        Spacer()
+                        Text("Tous vos appareils")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    
+                    Divider()
+                    
+                    VStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Filets de poulet (x4)")
+                                .strikethrough()
+                                .font(.caption)
+                            Spacer()
+                            Text("Acheté par Papa")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        HStack {
+                            Image(systemName: "circle")
+                                .foregroundColor(.secondary)
+                            Text("Lait d'avoine (x2)")
+                                .font(.caption)
+                                .bold()
+                            Spacer()
+                            Text("Ajouté par Maman")
+                                .font(.system(size: 9))
+                                .foregroundColor(.cyan)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
+                }
+                .background(Color(UIColor.secondarySystemBackground))
+                .cornerRadius(14)
+                .padding(.horizontal)
+                
+                // Avantages clés
+                VStack(alignment: .leading, spacing: 14) {
+                    benefitRow(
+                        icon: "person.3.fill",
+                        color: .blue,
+                        title: "Courses collaboratives en temps réel",
+                        description: "Chacun coche ses articles au supermarché. La liste se met à jour instantanément sur tous les iPhone de la famille."
+                    )
+                    
+                    benefitRow(
+                        icon: "fork.knife",
+                        color: .orange,
+                        title: "Intégration Recettes Anti-Gaspi",
+                        description: "Ajoutez tous les ingrédients manquants d'un repas en un seul clic directement dans la liste d'épicerie."
+                    )
+                    
+                    benefitRow(
+                        icon: "snowflake",
+                        color: .cyan,
+                        title: "Passerelle Directe Congélateur",
+                        description: "Une fois acheté, déplacez l'article dans votre congélateur avec date de péremption automatique sans rien ressaisir."
+                    )
+                }
+                .padding(.horizontal)
+                
+                // Bouton Achat StoreKit
+                VStack(spacing: 10) {
+                    Button {
+                        onUnlockTapped()
+                    } label: {
+                        HStack {
+                            if license.isPurchasing {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "sparkles")
+                                Text("Passer à la Licence Famille (9,99 $)")
+                                    .bold()
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
+                    }
+                    .disabled(license.isPurchasing)
+                    
+                    Button {
+                        onDemoTapped()
+                    } label: {
+                        Text("Aperçu / Tester la liste d'épicerie en mode Démo")
+                            .font(.caption)
+                            .foregroundColor(.cyan)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 30)
+            }
+        }
+    }
+    
+    private func benefitRow(icon: String, color: Color, title: String, description: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(.white)
+                .frame(width: 32, height: 32)
+                .background(color)
+                .cornerRadius(8)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .bold()
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
 // MARK: - 6. Partage Familial iCloud Réel
 
 struct FamilySharingView: View {
@@ -2788,6 +4021,9 @@ struct SettingsView: View {
                     Section(header: Text("Options Famille")) {
                         NavigationLink("Gérer le partage familial iCloud") {
                             FamilySharingView()
+                        }
+                        NavigationLink("Liste d'épicerie partagée iCloud") {
+                            GroceryListView()
                         }
                     }
                 }

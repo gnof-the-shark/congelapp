@@ -150,4 +150,96 @@ final class CongeoTests: XCTestCase {
                                      "Les recettes doivent être ordonnées avec le moins d'ingrédients à acheter en priorité")
         }
     }
+    
+    @MainActor
+    func testGroceryListManagement() throws {
+        let grocery = GroceryListManager()
+        grocery.items.removeAll()
+        
+        // Ajout d'articles
+        XCTAssertTrue(grocery.addItem(name: "Lait d'amande", quantity: 2, category: .dairy))
+        XCTAssertTrue(grocery.addItem(name: "Pommes Gala", quantity: 6, category: .fruits))
+        XCTAssertEqual(grocery.items.count, 2)
+        XCTAssertEqual(grocery.uncompletedCount, 2)
+        XCTAssertEqual(grocery.completedCount, 0)
+        
+        // Basculer l'état complété
+        let first = grocery.items[0]
+        grocery.toggleCompletion(for: first)
+        XCTAssertEqual(grocery.uncompletedCount, 1)
+        XCTAssertEqual(grocery.completedCount, 1)
+        
+        // Modifier la quantité
+        let second = grocery.items.first(where: { !$0.isCompleted })!
+        grocery.updateQuantity(itemId: second.id, delta: 2)
+        let updatedSecond = grocery.items.first(where: { $0.id == second.id })!
+        XCTAssertEqual(updatedSecond.quantity, 8)
+        
+        // Suppression des complétés
+        grocery.clearCompleted()
+        XCTAssertEqual(grocery.items.count, 1)
+        XCTAssertEqual(grocery.items.first?.name, "Pommes Gala")
+    }
+    
+    @MainActor
+    func testAddMissingIngredientsFromRecipe() throws {
+        let grocery = GroceryListManager()
+        grocery.items.removeAll()
+        
+        let missing = ["Sauce soja", "Gingembre frais", "Ail"]
+        let addedCount = grocery.addMissingIngredients(from: "Wok de poulet", missing: missing)
+        
+        XCTAssertEqual(addedCount, 3)
+        XCTAssertEqual(grocery.items.count, 3)
+        XCTAssertTrue(grocery.items.allSatisfy { $0.isFromAntiWasteRecipe })
+        XCTAssertTrue(grocery.items.allSatisfy { $0.recipeOriginTitle == "Wok de poulet" })
+        
+        // Éviter les doublons
+        let secondAddCount = grocery.addMissingIngredients(from: "Wok de poulet", missing: ["Sauce soja"])
+        XCTAssertEqual(secondAddCount, 0)
+        XCTAssertEqual(grocery.items.count, 3)
+    }
+    
+    @MainActor
+    func testGroceryTransferToFreezer() throws {
+        let grocery = GroceryListManager()
+        grocery.items.removeAll()
+        let inventory = InventoryManager()
+        let license = LicenseManager()
+        license.upgrade(to: .family)
+        
+        grocery.addItem(name: "Côtes de porc", quantity: 4, category: .meat)
+        let item = grocery.items.first!
+        
+        let initialInventoryCount = inventory.items.count
+        let transferred = grocery.transferToFreezer(
+            item: item,
+            location: "Maison",
+            expiryDays: 90,
+            inventory: inventory,
+            license: license
+        )
+        
+        XCTAssertTrue(transferred)
+        XCTAssertEqual(grocery.items.count, 0)
+        XCTAssertEqual(inventory.items.count, initialInventoryCount + 1)
+        
+        let inInventory = inventory.items.first(where: { $0.name == "Côtes de porc" })
+        XCTAssertNotNil(inInventory)
+        XCTAssertEqual(inInventory?.quantity, 4)
+    }
+    
+    @MainActor
+    func testFamilyTierGroceryListAccess() throws {
+        let license = LicenseManager()
+        
+        license.upgrade(to: .free)
+        XCTAssertFalse(license.currentTier.hasSharedGroceryList)
+        
+        license.upgrade(to: .pro)
+        XCTAssertFalse(license.currentTier.hasSharedGroceryList)
+        
+        license.upgrade(to: .family)
+        XCTAssertTrue(license.currentTier.hasSharedGroceryList)
+    }
 }

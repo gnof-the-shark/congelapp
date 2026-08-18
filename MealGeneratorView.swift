@@ -1763,7 +1763,9 @@ struct RecipeCardView: View {
     let onCook: () -> Void
     let onShare: () -> Void
     
+    @EnvironmentObject var grocery: GroceryListManager
     @State private var isExpanded = false
+    @State private var addedToGroceryToast = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1919,11 +1921,35 @@ struct RecipeCardView: View {
                 
                 // Ingrédients du placard ou à acheter
                 if !recipe.missingIngredients.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("🛒 Ingrédients du placard / à acheter :")
-                            .font(.caption)
-                            .bold()
-                            .foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("🛒 Ingrédients à prévoir / acheter :")
+                                .font(.caption)
+                                .bold()
+                                .foregroundColor(.orange)
+                            
+                            Spacer()
+                            
+                            Button {
+                                let count = grocery.addMissingIngredients(from: recipe.title, missing: recipe.missingIngredients)
+                                withAnimation { addedToGroceryToast = true }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                    withAnimation { addedToGroceryToast = false }
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: addedToGroceryToast ? "checkmark.circle.fill" : "cart.badge.plus")
+                                    Text(addedToGroceryToast ? "Ajouté !" : "Ajouter à l'épicerie")
+                                }
+                                .font(.system(size: 11, weight: .bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(addedToGroceryToast ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
+                                .foregroundColor(addedToGroceryToast ? .green : .orange)
+                                .cornerRadius(6)
+                            }
+                            .buttonStyle(.borderless)
+                        }
                         
                         ForEach(recipe.missingIngredients, id: \.self) { staple in
                             HStack(alignment: .top, spacing: 6) {

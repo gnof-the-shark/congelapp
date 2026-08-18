@@ -29,12 +29,28 @@ Le module **Recettes Anti-Gaspi** propose automatiquement des repas équilibrés
 
 ---
 
-## 3. Architecture Globale du Projet
+## 3. Liste d'Épicerie Familiale Partagée iCloud (Exclusivité Famille)
 
-- **`CongeoApp.swift`** : Point d'entrée de l'application, instanciation des `@StateObject` (`InventoryManager`, `LicenseManager`).
+- **Synchronisation iCloud en Temps Réel (`NSUbiquitousKeyValueStore`)** :
+  - Partage transparent et instantané entre tous les appareils connectés au compte iCloud familial.
+  - Écoute réactive des notifications système `NSUbiquitousKeyValueStore.didChangeExternallyNotification` avec fusion intelligente anti-perte de données.
+- **Fonctionnalités Collaboratives** :
+  - Identification de l'auteur de chaque article (ex: *Papa*, *Maman*, etc.).
+  - Cocher les articles en temps réel au supermarché.
+  - Bouton rapide **« Ranger au Congélateur »** pour transférer immédiatement les articles achetés vers l'inventaire avec date de péremption automatique.
+  - Ajout direct en 1 clic des ingrédients manquants depuis le module **Recettes Anti-Gaspi**.
+  - Badge dynamique d'articles à acheter sur l'onglet de navigation.
+  - Verrouillage StoreKit : réservé à la **Licence Famille (9,99 $)** avec écran de présentation et mode démo interactif.
+
+---
+
+## 4. Architecture Globale du Projet
+
+- **`CongeoApp.swift`** : Point d'entrée de l'application, instanciation des `@StateObject` (`InventoryManager`, `LicenseManager`, `GroceryListManager`).
 - **`ContentView.swift`** : 
-  - `MainTabView` : Navigation à onglets principaux.
+  - `MainTabView` : Navigation à onglets principaux avec badge dynamique.
   - `InventoryView` : Gestion complète des aliments du congélateur, emplacements (Maison, Chalet, Bureau) et calcul de péremption.
+  - `GroceryListView` : Liste d'épicerie familiale collaborative avec synchronisation iCloud bidirectionnelle.
   - `BulkScannerView` : Scan de codes-barres en rafale via `AVFoundation` et `OpenFoodFacts`.
   - `ObjectFinderView` : Détection, surlignage complet et verrouillage persistant sur flux caméra via Apple `Vision` (`VNRecognizeTextRequest`).
   - `HardwareView` : Connectivité réseau local avec la station caméra **ESP32-CAM Fisheye** (`http://[IP]:[PORT]/capture`).
@@ -44,4 +60,4 @@ Le module **Recettes Anti-Gaspi** propose automatiquement des repas équilibrés
   - `FrenchCulinaryTranslator` : Traduction automatique Français <-> Anglais.
   - `TheMealDBService` : Client réseau asynchrone TheMealDB.
   - `LocalRecipeEngine` : Moteur local de secours.
-  - `MealGeneratorView` & `RecipeCardView` : Interface utilisateur SwiftUI réactive.
+  - `MealGeneratorView` & `RecipeCardView` : Interface utilisateur SwiftUI réactive avec passerelle vers l'épicerie.
