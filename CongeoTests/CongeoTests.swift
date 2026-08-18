@@ -100,4 +100,12 @@ final class CongeoTests: XCTestCase {
         XCTAssertFalse(firstRecipe!.pantryStaples.isEmpty)
         XCTAssertTrue(firstRecipe!.matchedInventoryItemNames.contains("Filet de poulet") || firstRecipe!.matchedInventoryItemNames.contains("Brocolis"))
     }
+    
+    func testTheMealDBServiceTranslation() throws {
+        let service = TheMealDBService.shared
+        XCTAssertEqual(service.translateIngredientToEnglish("Poulet rôti"), "chicken")
+        XCTAssertEqual(service.translateIngredientToEnglish("Pavé de saumon"), "salmon")
+        XCTAssertEqual(service.translateIngredientToEnglish("Steak haché de boeuf"), "beef")
+        XCTAssertEqual(service.translateIngredientToEnglish("Haricots verts"), "beans")
+    }
 }

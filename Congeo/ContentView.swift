@@ -1481,21 +1481,61 @@ class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObj
     weak var delegate: BarcodeScannerDelegate?
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var statusLabel: UILabel?
     
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        setupCamera()
+        checkCameraPermissionsAndSetup()
+    }
+    
+    private func checkCameraPermissionsAndSetup() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            setupCamera()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.setupCamera()
+                    } else {
+                        self?.showCameraUnavailableMessage("Accès à la caméra refusé.\nActivez-le dans Réglages > Congélo.")
+                    }
+                }
+            }
+        case .denied, .restricted:
+            showCameraUnavailableMessage("Accès à la caméra désactivé.\nVeuillez autoriser l'accès dans Réglages.")
+        @unknown default:
+            showCameraUnavailableMessage("Statut caméra inconnu.")
+        }
     }
     
     private func setupCamera() {
         let session = AVCaptureSession()
-        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else { return }
-        guard let videoInput = try? AVCaptureDeviceInput(device: videoCaptureDevice) else { return }
+        
+        let videoCaptureDevice: AVCaptureDevice?
+        if let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
+            videoCaptureDevice = backCamera
+        } else if let defaultDevice = AVCaptureDevice.default(for: .video) {
+            videoCaptureDevice = defaultDevice
+        } else {
+            videoCaptureDevice = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInWideAngleCamera, .builtInDualCamera, .builtInTrueDepthCamera],
+                mediaType: .video,
+                position: .unspecified
+            ).devices.first
+        }
+        
+        guard let device = videoCaptureDevice,
+              let videoInput = try? AVCaptureDeviceInput(device: device) else {
+            showCameraUnavailableMessage("Caméra non disponible sur cet appareil / simulateur.")
+            return
+        }
         
         if session.canAddInput(videoInput) {
             session.addInput(videoInput)
         } else {
+            showCameraUnavailableMessage("Impossible d'ajouter l'entrée vidéo.")
             return
         }
         
@@ -1505,6 +1545,7 @@ class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObj
             metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
             metadataOutput.metadataObjectTypes = [.ean13, .ean8, .qr, .code128, .upce]
         } else {
+            showCameraUnavailableMessage("Impossible d'analyser les codes-barres.")
             return
         }
         
@@ -1516,9 +1557,29 @@ class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObj
         self.previewLayer = preview
         self.captureSession = session
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            session.startRunning()
+        DispatchQueue.global(qos: .userInitiated).async { [weak session] in
+            session?.startRunning()
         }
+    }
+    
+    private func showCameraUnavailableMessage(_ message: String) {
+        if statusLabel == nil {
+            let label = UILabel()
+            label.textAlignment = .center
+            label.textColor = .white
+            label.numberOfLines = 0
+            label.font = .systemFont(ofSize: 14, weight: .medium)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20)
+            ])
+            statusLabel = label
+        }
+        statusLabel?.text = message
     }
     
     override func viewDidLayoutSubviews() {
@@ -1746,26 +1807,63 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
     
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var statusLabel: UILabel?
     private var isProcessing = false
     
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        setupCamera()
+        checkCameraPermissionsAndSetup()
+    }
+    
+    private func checkCameraPermissionsAndSetup() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            setupCamera()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.setupCamera()
+                    } else {
+                        self?.showCameraUnavailableMessage("Accès caméra requis pour l'analyse visuelle.\nActivez-le dans Réglages > Congélo.")
+                    }
+                }
+            }
+        case .denied, .restricted:
+            showCameraUnavailableMessage("Accès caméra désactivé.\nVeuillez autoriser l'accès dans Réglages.")
+        @unknown default:
+            showCameraUnavailableMessage("Statut caméra inconnu.")
+        }
     }
     
     private func setupCamera() {
         let session = AVCaptureSession()
         session.sessionPreset = .high
         
-        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let videoInput = try? AVCaptureDeviceInput(device: videoDevice) else {
+        let videoCaptureDevice: AVCaptureDevice?
+        if let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
+            videoCaptureDevice = backCamera
+        } else if let defaultDevice = AVCaptureDevice.default(for: .video) {
+            videoCaptureDevice = defaultDevice
+        } else {
+            videoCaptureDevice = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInWideAngleCamera, .builtInDualCamera, .builtInTrueDepthCamera],
+                mediaType: .video,
+                position: .unspecified
+            ).devices.first
+        }
+        
+        guard let device = videoCaptureDevice,
+              let videoInput = try? AVCaptureDeviceInput(device: device) else {
+            showCameraUnavailableMessage("Caméra non disponible sur cet appareil / simulateur.")
             return
         }
         
         if session.canAddInput(videoInput) {
             session.addInput(videoInput)
         } else {
+            showCameraUnavailableMessage("Impossible d'ajouter l'entrée vidéo.")
             return
         }
         
@@ -1785,9 +1883,29 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
         self.previewLayer = preview
         self.captureSession = session
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            session.startRunning()
+        DispatchQueue.global(qos: .userInitiated).async { [weak session] in
+            session?.startRunning()
         }
+    }
+    
+    private func showCameraUnavailableMessage(_ message: String) {
+        if statusLabel == nil {
+            let label = UILabel()
+            label.textAlignment = .center
+            label.textColor = .white
+            label.numberOfLines = 0
+            label.font = .systemFont(ofSize: 13, weight: .medium)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16)
+            ])
+            statusLabel = label
+        }
+        statusLabel?.text = message
     }
     
     override func viewDidLayoutSubviews() {
@@ -1824,6 +1942,7 @@ class VisionCameraViewController: UIViewController, AVCaptureVideoDataOutputSamp
         }
         
         request.recognitionLevel = .fast
+        request.recognitionLanguages = ["fr-FR", "en-US"]
         request.usesLanguageCorrection = false
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right, options: [:])
