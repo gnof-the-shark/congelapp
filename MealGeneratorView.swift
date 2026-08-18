@@ -20,6 +20,8 @@ struct AntiWasteRecipe: Identifiable, Codable, Equatable {
     var area: String? = nil
     var youtubeURL: String? = nil
     var isFavorite: Bool = false
+    var itemsToBuyCount: Int = 0
+    var missingIngredients: [String] = []
 }
 
 // MARK: - Modèles Décodables de l'API
@@ -593,17 +595,31 @@ final class TheMealDBService {
         let translatedToEnglish = FrenchCulinaryTranslator.shared.translateSearchTermToEnglish(trimmed)
         let queryEncoded = (translatedToEnglish.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? translatedToEnglish)
         
+        var results: [AntiWasteRecipe] = []
+        
         // 1. Recherche par mot-clé
         if let directResults = await fetchDirectSearch(queryEncoded: queryEncoded, matchedStockNames: matchedStockNames), !directResults.isEmpty {
-            return directResults
+            results.append(contentsOf: directResults)
         }
         
         // 2. Recherche par filtre ingrédient
         if let filteredResults = await fetchFilteredByIngredient(ingredientEncoded: queryEncoded, matchedStockNames: matchedStockNames), !filteredResults.isEmpty {
-            return filteredResults
+            for r in filteredResults {
+                if !results.contains(where: { $0.title == r.title }) {
+                    results.append(r)
+                }
+            }
         }
         
-        return []
+        // Tri prioritaire : Recettes demandant le MOINS d'ingrédients supplémentaires à acheter
+        results.sort {
+            if $0.itemsToBuyCount != $1.itemsToBuyCount {
+                return $0.itemsToBuyCount < $1.itemsToBuyCount
+            }
+            return $0.matchedInventoryItemNames.count > $1.matchedInventoryItemNames.count
+        }
+        
+        return results
     }
     
     private func fetchDirectSearch(queryEncoded: String, matchedStockNames: [String]) async -> [AntiWasteRecipe]? {
@@ -630,7 +646,7 @@ final class TheMealDBService {
             guard let meals = decoded.meals, !meals.isEmpty else { return nil }
             
             var recipes: [AntiWasteRecipe] = []
-            for item in meals.prefix(5) {
+            for item in meals.prefix(8) {
                 if let detail = await fetchMealDetails(id: item.idMeal) {
                     recipes.append(convertToAntiWasteRecipe(detail, matchedStockNames: matchedStockNames))
                 }
@@ -681,17 +697,29 @@ final class TheMealDBService {
         
         // Trouver les ingrédients du congélateur utilisés dans cette recette
         var matched: [String] = []
-        for stock in matchedStockNames {
-            let stockLower = stock.lowercased()
-            let stockEn = FrenchCulinaryTranslator.shared.translateSearchTermToEnglish(stockLower)
+        var missing: [String] = []
+        
+        for raw in rawIngredients {
+            let ingLower = raw.ingredient.lowercased()
+            let translatedItem = FrenchCulinaryTranslator.shared.translateIngredientItem(rawIngredient: raw.ingredient, rawMeasure: raw.measure)
             
-            let found = rawIngredients.contains { raw in
-                let ingLower = raw.ingredient.lowercased()
-                return ingLower.contains(stockLower) || stockLower.contains(ingLower) ||
-                       ingLower.contains(stockEn) || stockEn.contains(ingLower)
+            var isFreezerMatch = false
+            for stock in matchedStockNames {
+                let stockLower = stock.lowercased()
+                let stockEn = FrenchCulinaryTranslator.shared.translateSearchTermToEnglish(stockLower)
+                
+                if ingLower.contains(stockLower) || stockLower.contains(ingLower) ||
+                   ingLower.contains(stockEn) || stockEn.contains(ingLower) {
+                    isFreezerMatch = true
+                    if !matched.contains(stock) {
+                        matched.append(stock)
+                    }
+                    break
+                }
             }
-            if found {
-                matched.append(stock)
+            
+            if !isFreezerMatch {
+                missing.append(translatedItem)
             }
         }
         
@@ -716,7 +744,9 @@ final class TheMealDBService {
             thumbnailURL: meal.strMealThumb,
             area: frenchArea,
             youtubeURL: meal.strYoutube,
-            isFavorite: false
+            isFavorite: false,
+            itemsToBuyCount: missing.count,
+            missingIngredients: missing
         )
     }
     
@@ -1059,11 +1089,41 @@ struct LocalRecipeEngine {
             ))
         }
         
-        if let maxT = maxTimeMinutes {
-            results = results.filter { ($0.prepTimeMinutes + $0.cookTimeMinutes) <= maxT }
+        // Calcul des ingrédients à acheter pour chaque recette locale et tri par le moins d'achats
+        let freezerNames = items.map { $0.name }
+        var finalizedResults: [AntiWasteRecipe] = []
+        
+        for r in results {
+            var recipe = r
+            var missing: [String] = []
+            for staple in recipe.pantryStaples {
+                let stapleLower = staple.lowercased()
+                let isFreezerMatch = freezerNames.contains { name in
+                    let nameLower = name.lowercased()
+                    return stapleLower.contains(nameLower) || nameLower.contains(stapleLower)
+                }
+                if !isFreezerMatch {
+                    missing.append(staple)
+                }
+            }
+            recipe.missingIngredients = missing
+            recipe.itemsToBuyCount = missing.count
+            finalizedResults.append(recipe)
         }
         
-        return results
+        // Tri prioritaire : Recettes avec le MOINS d'ingrédients à acheter
+        finalizedResults.sort {
+            if $0.itemsToBuyCount != $1.itemsToBuyCount {
+                return $0.itemsToBuyCount < $1.itemsToBuyCount
+            }
+            return $0.matchedInventoryItemNames.count > $1.matchedInventoryItemNames.count
+        }
+        
+        if let maxT = maxTimeMinutes {
+            finalizedResults = finalizedResults.filter { ($0.prepTimeMinutes + $0.cookTimeMinutes) <= maxT }
+        }
+        
+        return finalizedResults
     }
     
     // MARK: - Détection Intelligente de la Nature Culinaire des Aliments
@@ -1152,14 +1212,6 @@ struct LocalRecipeEngine {
         return isYogurtLike(item) || isCheeseLike(item)
     }
 }
-        
-        if let maxT = maxTimeMinutes {
-            results = results.filter { ($0.prepTimeMinutes + $0.cookTimeMinutes) <= maxT }
-        }
-        
-        return results
-    }
-}
 
 // MARK: - Vue Principale du Générateur de Recettes Anti-Gaspi
 
@@ -1172,7 +1224,16 @@ struct MealGeneratorView: View {
         case favorites = 1
     }
     
+    enum RecipeSortOption: String, CaseIterable, Identifiable {
+        case fewestItemsToBuy = "Moins d'achats 🛒"
+        case urgency = "Dates courtes ⚡"
+        case quickest = "Express ⏱️"
+        
+        var id: String { rawValue }
+    }
+    
     @State private var currentTabSection: RecipeTabSection = .suggestions
+    @State private var sortOption: RecipeSortOption = .fewestItemsToBuy
     @State private var suggestedRecipes: [AntiWasteRecipe] = []
     @State private var favorites: [AntiWasteRecipe] = []
     
@@ -1292,69 +1353,98 @@ struct MealGeneratorView: View {
                         
                         // Filtres et actions rapides
                         if currentTabSection == .suggestions {
-                            HStack(spacing: 8) {
-                                Menu {
-                                    Button("Tous les temps") { maxTimeFilter = 90; applyFilters() }
-                                    Button("Moins de 20 min (Express)") { maxTimeFilter = 20; applyFilters() }
-                                    Button("Moins de 35 min") { maxTimeFilter = 35; applyFilters() }
-                                    Button("Moins de 50 min") { maxTimeFilter = 50; applyFilters() }
-                                } label: {
-                                    HStack {
-                                        Image(systemName: "clock")
-                                        Text(maxTimeFilter >= 90 ? "Temps : Tous" : "< \(maxTimeFilter) min")
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(Color.secondary.opacity(0.12))
-                                    .cornerRadius(8)
-                                }
-                                
-                                Button {
-                                    isVeggieOnly.toggle()
-                                    applyFilters()
-                                } label: {
-                                    HStack {
-                                        Image(systemName: isVeggieOnly ? "leaf.fill" : "leaf")
-                                        Text("Végétarien")
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(isVeggieOnly ? Color.green : Color.secondary.opacity(0.12))
-                                    .foregroundColor(isVeggieOnly ? .white : .primary)
-                                    .cornerRadius(8)
-                                }
-                                
-                                Button {
-                                    Task { await fetchSurpriseRecipe() }
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "dice.fill")
-                                        Text("Surprise 🎲")
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(Color.purple.opacity(0.15))
-                                    .foregroundColor(.purple)
-                                    .cornerRadius(8)
-                                }
-                                
-                                Spacer()
-                                
-                                Button {
-                                    Task { await loadAutoFreezerRecipes() }
-                                } label: {
-                                    Image(systemName: "arrow.clockwise")
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    // Menu de Tri (Moins d'achats prioritaire)
+                                    Menu {
+                                        ForEach(RecipeSortOption.allCases) { opt in
+                                            Button {
+                                                sortOption = opt
+                                                applyFilters()
+                                            } label: {
+                                                HStack {
+                                                    Text(opt.rawValue)
+                                                    if sortOption == opt {
+                                                        Image(systemName: "checkmark")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "arrow.up.arrow.down")
+                                            Text(sortOption.rawValue)
+                                        }
                                         .font(.caption)
-                                        .padding(6)
+                                        .bold()
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
                                         .background(Color.cyan.opacity(0.15))
                                         .foregroundColor(.cyan)
-                                        .clipShape(Circle())
+                                        .cornerRadius(8)
+                                    }
+                                    
+                                    Menu {
+                                        Button("Tous les temps") { maxTimeFilter = 90; applyFilters() }
+                                        Button("Moins de 20 min (Express)") { maxTimeFilter = 20; applyFilters() }
+                                        Button("Moins de 35 min") { maxTimeFilter = 35; applyFilters() }
+                                        Button("Moins de 50 min") { maxTimeFilter = 50; applyFilters() }
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: "clock")
+                                            Text(maxTimeFilter >= 90 ? "Temps : Tous" : "< \(maxTimeFilter) min")
+                                        }
+                                        .font(.caption)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.secondary.opacity(0.12))
+                                        .cornerRadius(8)
+                                    }
+                                    
+                                    Button {
+                                        isVeggieOnly.toggle()
+                                        applyFilters()
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: isVeggieOnly ? "leaf.fill" : "leaf")
+                                            Text("Végétarien")
+                                        }
+                                        .font(.caption)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(isVeggieOnly ? Color.green : Color.secondary.opacity(0.12))
+                                        .foregroundColor(isVeggieOnly ? .white : .primary)
+                                        .cornerRadius(8)
+                                    }
+                                    
+                                    Button {
+                                        Task { await fetchSurpriseRecipe() }
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "dice.fill")
+                                            Text("Surprise 🎲")
+                                        }
+                                        .font(.caption)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.purple.opacity(0.15))
+                                        .foregroundColor(.purple)
+                                        .cornerRadius(8)
+                                    }
+                                    
+                                    Button {
+                                        Task { await loadAutoFreezerRecipes() }
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.caption)
+                                            .padding(6)
+                                            .background(Color.cyan.opacity(0.15))
+                                            .foregroundColor(.cyan)
+                                            .clipShape(Circle())
+                                    }
                                 }
+                                .padding(.horizontal)
                             }
-                            .padding(.horizontal)
                         }
                     }
                     .padding(.bottom, 6)
@@ -1445,6 +1535,22 @@ struct MealGeneratorView: View {
                 return cat.contains("végé") || cat.contains("accompagnement") || cat.contains("four") || cat.contains("dessert")
             }
         }
+        
+        switch sortOption {
+        case .fewestItemsToBuy:
+            list.sort {
+                if $0.itemsToBuyCount != $1.itemsToBuyCount {
+                    return $0.itemsToBuyCount < $1.itemsToBuyCount
+                }
+                return $0.matchedInventoryItemNames.count > $1.matchedInventoryItemNames.count
+            }
+        case .urgency:
+            // Conserve l'ordre natif des dates courtes
+            break
+        case .quickest:
+            list.sort { ($0.prepTimeMinutes + $0.cookTimeMinutes) < ($1.prepTimeMinutes + $1.cookTimeMinutes) }
+        }
+        
         return list
     }
     
@@ -1718,6 +1824,33 @@ struct RecipeCardView: View {
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    
+                    // Badge Anti-Gaspi & Achats nécessaires
+                    if recipe.itemsToBuyCount == 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.seal.fill")
+                            Text("0 achat • 100% dans votre congélateur !")
+                        }
+                        .font(.caption2)
+                        .bold()
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.15))
+                        .foregroundColor(.green)
+                        .cornerRadius(6)
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "cart.fill")
+                            Text("\(recipe.itemsToBuyCount) ingrédient(s) à prévoir / placard")
+                        }
+                        .font(.caption2)
+                        .bold()
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.15))
+                        .foregroundColor(.orange)
+                        .cornerRadius(6)
+                    }
                 }
                 
                 Spacer()
@@ -1763,17 +1896,57 @@ struct RecipeCardView: View {
             if isExpanded {
                 Divider()
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("🧂 Ingrédients & Assaisonnements :")
-                        .font(.caption)
-                        .bold()
-                    
-                    ForEach(recipe.pantryStaples, id: \.self) { staple in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text("•")
-                                .foregroundColor(.secondary)
-                            Text(staple)
-                                .font(.caption)
+                // Ingrédients du congélateur
+                if !recipe.matchedInventoryItemNames.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("❄️ Ingrédients de votre congélateur :")
+                            .font(.caption)
+                            .bold()
+                            .foregroundColor(.cyan)
+                        
+                        ForEach(recipe.matchedInventoryItemNames, id: \.self) { item in
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.caption2)
+                                Text(item)
+                                    .font(.caption)
+                                    .bold()
+                            }
+                        }
+                    }
+                }
+                
+                // Ingrédients du placard ou à acheter
+                if !recipe.missingIngredients.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("🛒 Ingrédients du placard / à acheter :")
+                            .font(.caption)
+                            .bold()
+                            .foregroundColor(.orange)
+                        
+                        ForEach(recipe.missingIngredients, id: \.self) { staple in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text("•")
+                                    .foregroundColor(.secondary)
+                                Text(staple)
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                } else if recipe.pantryStaples.count > recipe.matchedInventoryItemNames.count {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("🧂 Assaisonnements & Placard :")
+                            .font(.caption)
+                            .bold()
+                        
+                        ForEach(recipe.pantryStaples, id: \.self) { staple in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text("•")
+                                    .foregroundColor(.secondary)
+                                Text(staple)
+                                    .font(.caption)
+                            }
                         }
                     }
                 }

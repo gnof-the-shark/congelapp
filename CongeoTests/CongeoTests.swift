@@ -134,4 +134,20 @@ final class CongeoTests: XCTestCase {
             }
         }
     }
+    
+    func testRecipeOptimizationFewestItemsToBuy() throws {
+        let items = [
+            FoodItem(name: "Yogourt", quantity: 1, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 2), category: .dairy),
+            FoodItem(name: "Framboises", quantity: 1, location: "Maison", expiryDate: Date().addingTimeInterval(86400 * 5), category: .fruits)
+        ]
+        
+        let recipes = RecipeEngine.generateRecipes(from: items)
+        XCTAssertFalse(recipes.isEmpty)
+        
+        // Les recettes doivent être triées par nombre d'ingrédients à acheter croissant
+        for i in 0..<(recipes.count - 1) {
+            XCTAssertLessThanOrEqual(recipes[i].itemsToBuyCount, recipes[i + 1].itemsToBuyCount,
+                                     "Les recettes doivent être ordonnées avec le moins d'ingrédients à acheter en priorité")
+        }
+    }
 }

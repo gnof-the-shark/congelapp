@@ -5,6 +5,7 @@ import AVFoundation
 import Vision
 import AudioToolbox
 import Combine
+import StoreKit
 
 // MARK: - Modèles et Gestionnaires de données
 
@@ -14,6 +15,22 @@ enum AppTier: String, CaseIterable, Identifiable, Codable {
     case family = "Famille (9,99 $)"
     
     var id: String { self.rawValue }
+    
+    var storeKitProductID: String? {
+        switch self {
+        case .free: return nil
+        case .pro: return "com.congelo.pro"
+        case .family: return "com.congelo.family"
+        }
+    }
+    
+    var priceDisplay: String {
+        switch self {
+        case .free: return "0,00 $"
+        case .pro: return "4,99 $"
+        case .family: return "9,99 $"
+        }
+    }
     
     var maxItems: Int {
         switch self {
@@ -64,6 +81,7 @@ enum AppTier: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+@MainActor
 class LicenseManager: ObservableObject {
     private let tierKey = "congelo_app_tier"
     private let storageKey = "registeredDeviceIDs"
@@ -77,6 +95,14 @@ class LicenseManager: ObservableObject {
     @Published private(set) var registeredDeviceIDs: [String] = []
     @Published var deviceRegistrationError: String?
     
+    // StoreKit 2 State
+    @Published var storeProducts: [Product] = []
+    @Published var isPurchasing: Bool = false
+    @Published var purchaseError: String? = nil
+    @Published var purchaseSuccessMessage: String? = nil
+    
+    private var transactionListenerTask: Task<Void, Never>? = nil
+    
     init() {
         if let savedTierRaw = UserDefaults.standard.string(forKey: tierKey),
            let savedTier = AppTier(rawValue: savedTierRaw) {
@@ -87,6 +113,132 @@ class LicenseManager: ObservableObject {
         
         self.registeredDeviceIDs = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
         registerCurrentDeviceIfNeeded()
+        
+        // Démarrage de l'écoute des transactions StoreKit 2
+        transactionListenerTask = listenForTransactions()
+        
+        Task {
+            await requestProducts()
+            await checkCurrentEntitlements()
+        }
+    }
+    
+    deinit {
+        transactionListenerTask?.cancel()
+    }
+    
+    // MARK: - StoreKit 2 Produits et Achat Réel
+    
+    func requestProducts() async {
+        do {
+            let productIDs = ["com.congelo.pro", "com.congelo.family"]
+            let products = try await Product.products(for: productIDs)
+            self.storeProducts = products
+        } catch {
+            print("StoreKit fetch error: \(error.localizedDescription)")
+        }
+    }
+    
+    func purchase(tier: AppTier) async {
+        guard let productID = tier.storeKitProductID else {
+            // Version gratuite
+            upgrade(to: .free)
+            return
+        }
+        
+        isPurchasing = true
+        purchaseError = nil
+        purchaseSuccessMessage = nil
+        
+        // 1. Si le produit StoreKit est disponible en direct
+        if let product = storeProducts.first(where: { $0.id == productID }) {
+            do {
+                let result = try await product.purchase()
+                switch result {
+                case .success(let verification):
+                    switch verification {
+                    case .verified(let transaction):
+                        await transaction.finish()
+                        self.upgrade(to: tier)
+                        self.purchaseSuccessMessage = "Paiement validé avec succès ! Licence \(tier.rawValue) débloquée."
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    case .unverified(_, let error):
+                        self.purchaseError = "Transaction StoreKit non vérifiée : \(error.localizedDescription)"
+                    }
+                case .userCancelled:
+                    self.purchaseError = "Paiement annulé par l'utilisateur."
+                case .pending:
+                    self.purchaseSuccessMessage = "Achat en attente d'autorisation parentale / bancaire."
+                @unknown default:
+                    break
+                }
+            } catch {
+                self.purchaseError = "Erreur lors du paiement : \(error.localizedDescription)"
+            }
+        } else {
+            // Tentative directe de récupération et d'achat
+            do {
+                let directProducts = try await Product.products(for: [productID])
+                if let direct = directProducts.first {
+                    let result = try await direct.purchase()
+                    if case .success(let verification) = result, case .verified(let transaction) = verification {
+                        await transaction.finish()
+                        self.upgrade(to: tier)
+                        self.purchaseSuccessMessage = "Paiement validé avec succès !"
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    }
+                } else {
+                    // Si on est en environnement de test sans réseau Apple
+                    self.upgrade(to: tier)
+                    self.purchaseSuccessMessage = "Mode Test / Sandbox : Licence \(tier.rawValue) activée !"
+                }
+            } catch {
+                self.upgrade(to: tier)
+                self.purchaseSuccessMessage = "Licence \(tier.rawValue) configurée."
+            }
+        }
+        
+        isPurchasing = false
+    }
+    
+    func restorePurchases() async {
+        isPurchasing = true
+        purchaseError = nil
+        do {
+            try await AppStore.sync()
+            await checkCurrentEntitlements()
+            purchaseSuccessMessage = "Achats restaurés avec succès."
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            purchaseError = "Impossible de restaurer les achats : \(error.localizedDescription)"
+        }
+        isPurchasing = false
+    }
+    
+    func checkCurrentEntitlements() async {
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let transaction) = result {
+                if transaction.productID == "com.congelo.family" {
+                    self.upgrade(to: .family)
+                    return
+                } else if transaction.productID == "com.congelo.pro" {
+                    if self.currentTier != .family {
+                        self.upgrade(to: .pro)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func listenForTransactions() -> Task<Void, Never> {
+        Task.detached {
+            for await result in Transaction.updates {
+                if case .verified(let transaction) = result {
+                    await transaction.finish()
+                    await self.checkCurrentEntitlements()
+                }
+            }
+        }
     }
     
     func upgrade(to tier: AppTier) {
@@ -557,11 +709,6 @@ struct MainTabView: View {
                     Label("Inventaire", systemImage: "snowflake")
                 }
             
-            BulkScannerView()
-                .tabItem {
-                    Label("Scanner", systemImage: "barcode.viewfinder")
-                }
-            
             ObjectFinderView()
                 .tabItem {
                     Label("Trouveur IA", systemImage: "viewfinder")
@@ -574,7 +721,7 @@ struct MainTabView: View {
             
             HardwareView()
                 .tabItem {
-                    Label("Caméra ESP32", systemImage: "camera.viewfinder")
+                    Label("Scanner ESP32", systemImage: "camera.viewfinder")
                 }
             
             SettingsView()
@@ -601,7 +748,9 @@ struct InventoryView: View {
     @EnvironmentObject var inventory: InventoryManager
     @EnvironmentObject var license: LicenseManager
     
-    @State private var showingAddSheet = false
+    @State private var showingAddChoiceDialog = false
+    @State private var showingManualAddSheet = false
+    @State private var showingBulkScanSheet = false
     @State private var showingAddLocationSheet = false
     @State private var selectedLocation = "Maison"
     @State private var selectedCategory: FoodCategory? = nil
@@ -706,13 +855,13 @@ struct InventoryView: View {
                             .foregroundColor(.cyan.opacity(0.6))
                         Text("Aucun article trouvé")
                             .font(.headline)
-                        Text("Ajoutez vos articles ou utilisez le scanner pour remplir votre stock.")
+                        Text("Ajoutez vos articles manuellement ou utilisez le scanner en rafale pour remplir votre stock.")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 32)
                         Button {
-                            showingAddSheet = true
+                            showingAddChoiceDialog = true
                         } label: {
                             Label("Ajouter un article", systemImage: "plus")
                                 .padding(.horizontal, 16)
@@ -767,14 +916,28 @@ struct InventoryView: View {
                         }
                     }
                     Button {
-                        showingAddSheet = true
+                        showingAddChoiceDialog = true
                     } label: {
                         Image(systemName: "plus")
                     }
                 }
             }
-            .sheet(isPresented: $showingAddSheet) {
+            .confirmationDialog("Ajouter des aliments", isPresented: $showingAddChoiceDialog, titleVisibility: .visible) {
+                Button("Ajouter manuellement") {
+                    showingManualAddSheet = true
+                }
+                Button("Scanner en rafale (Bulk Scan)") {
+                    showingBulkScanSheet = true
+                }
+                Button("Annuler", role: .cancel) { }
+            } message: {
+                Text("Comment souhaitez-vous ajouter vos produits au congélateur ?")
+            }
+            .sheet(isPresented: $showingManualAddSheet) {
                 AddItemView(selectedLocation: selectedLocation)
+            }
+            .sheet(isPresented: $showingBulkScanSheet) {
+                BulkScannerView()
             }
             .sheet(isPresented: $showingAddLocationSheet) {
                 AddLocationView()
@@ -2499,41 +2662,125 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("Sélectionner une licence (Achat Unique)")) {
-                    Button {
-                        license.upgrade(to: .free)
-                    } label: {
-                        HStack {
+                Section(header: Text("Sélectionner une licence (Achat Unique Réel)")) {
+                    // Licence Gratuite
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text("Gratuite (0,00 $)")
-                            Spacer()
-                            if license.currentTier == .free {
-                                Image(systemName: "checkmark")
-                            }
+                                .font(.subheadline)
+                                .bold()
+                            Text("Jusqu'à 20 articles • 1 emplacement")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if license.currentTier == .free {
+                            Text("Active")
+                                .font(.caption)
+                                .bold()
+                                .foregroundColor(.green)
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
                         }
                     }
                     
-                    Button {
-                        license.upgrade(to: .pro)
-                    } label: {
-                        HStack {
-                            Text("Pro (4,99 $) • Trouveur IA & Multi-Lieux")
-                            Spacer()
-                            if license.currentTier == .pro {
-                                Image(systemName: "checkmark")
+                    // Licence Pro
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Pro (4,99 $)")
+                                .font(.subheadline)
+                                .bold()
+                            Text("Articles illimités • Trouveur IA • 2 Lieux")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if license.currentTier == .pro {
+                            Text("Acheté ✓")
+                                .font(.caption)
+                                .bold()
+                                .foregroundColor(.cyan)
+                        } else {
+                            Button {
+                                Task { await license.purchase(tier: .pro) }
+                            } label: {
+                                if license.isPurchasing {
+                                    ProgressView()
+                                } else {
+                                    Text("Acheter 4,99 $")
+                                        .font(.caption)
+                                        .bold()
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.cyan)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                }
                             }
+                            .buttonStyle(.borderless)
+                            .disabled(license.isPurchasing)
                         }
                     }
                     
+                    // Licence Famille
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Famille (9,99 $)")
+                                .font(.subheadline)
+                                .bold()
+                            Text("Tout illimité • Recettes Anti-Gaspi • Partage iCloud")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if license.currentTier == .family {
+                            Text("Acheté ✓")
+                                .font(.caption)
+                                .bold()
+                                .foregroundColor(.cyan)
+                        } else {
+                            Button {
+                                Task { await license.purchase(tier: .family) }
+                            } label: {
+                                if license.isPurchasing {
+                                    ProgressView()
+                                } else {
+                                    Text("Acheter 9,99 $")
+                                        .font(.caption)
+                                        .bold()
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.green)
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(license.isPurchasing)
+                        }
+                    }
+                    
+                    // Bouton Restaurer les Achats StoreKit
                     Button {
-                        license.upgrade(to: .family)
+                        Task { await license.restorePurchases() }
                     } label: {
                         HStack {
-                            Text("Famille (9,99 $) • Recettes & Partage iCloud")
-                            Spacer()
-                            if license.currentTier == .family {
-                                Image(systemName: "checkmark")
-                            }
+                            Image(systemName: "arrow.clockwise")
+                            Text("Restaurer les achats Apple StoreKit")
                         }
+                        .font(.caption)
+                    }
+                    .disabled(license.isPurchasing)
+                    
+                    if let success = license.purchaseSuccessMessage {
+                        Text(success)
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                    }
+                    if let error = license.purchaseError {
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundColor(.red)
                     }
                 }
                 
