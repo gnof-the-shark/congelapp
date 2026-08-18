@@ -375,6 +375,7 @@ struct FoodItem: Identifiable, Codable, Equatable {
     var category: FoodCategory = .other
     var notes: String?
     var imageURL: String?
+    var capturedPhotoBase64: String? // Base64 de la photo capturée lors du scan de code-barres
     
     var daysUntilExpiry: Int {
         let calendar = Calendar.current
@@ -513,6 +514,7 @@ class InventoryManager: ObservableObject {
         category: FoodCategory? = nil,
         notes: String? = nil,
         imageURL: String? = nil,
+        capturedPhotoBase64: String? = nil,
         license: LicenseManager
     ) -> Bool {
         let allowedLocations = visibleLocations(for: license.currentTier)
@@ -534,7 +536,8 @@ class InventoryManager: ObservableObject {
             brand: brand,
             category: determinedCategory,
             notes: notes,
-            imageURL: imageURL
+            imageURL: imageURL,
+            capturedPhotoBase64: capturedPhotoBase64
         )
         items.insert(newItem, at: 0)
         return true
@@ -607,6 +610,7 @@ struct ScannedProduct: Identifiable, Codable, Equatable {
     var category: FoodCategory = .other
     var imageURL: String?
     var nutriscore: String?
+    var capturedPhotoBase64: String? // Cliché photo du code-barres
 }
 
 struct OpenFoodFactsResponse: Decodable {
@@ -1902,8 +1906,8 @@ struct LiveBarcodeCameraSheet: View {
         NavigationView {
             VStack(spacing: 0) {
                 ZStack {
-                    RealCameraBarcodeScannerView { barcode in
-                        handleDetectedBarcode(barcode)
+                    RealCameraBarcodeScannerView { barcode, photoData in
+                        handleDetectedBarcode(barcode, photoData: photoData)
                     }
                     .frame(maxHeight: .infinity)
                     
@@ -1978,15 +1982,18 @@ struct LiveBarcodeCameraSheet: View {
         }
     }
     
-    private func handleDetectedBarcode(_ code: String) {
+    private func handleDetectedBarcode(_ code: String, photoData: Data?) {
         guard code != lastScannedCode, !isFetching else { return }
         lastScannedCode = code
         isFetching = true
         AudioServicesPlaySystemSound(1057)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         
+        let base64Photo = photoData?.base64EncodedString()
+        
         Task {
-            if let product = await service.fetchProduct(for: code) {
+            if var product = await service.fetchProduct(for: code) {
+                product.capturedPhotoBase64 = base64Photo
                 onProductScanned(product)
                 let ok = inventory.addItem(
                     name: product.name,
@@ -1997,6 +2004,7 @@ struct LiveBarcodeCameraSheet: View {
                     brand: product.brand,
                     category: product.category,
                     imageURL: product.imageURL,
+                    capturedPhotoBase64: base64Photo,
                     license: license
                 )
                 DispatchQueue.main.async {
@@ -2008,8 +2016,26 @@ struct LiveBarcodeCameraSheet: View {
                     isFetching = false
                 }
             } else {
+                // Si non trouvé dans OpenFoodFacts, on l'ajoute quand même avec un nom générique + la photo capturée
+                let genericName = "Produit scané #\(code.suffix(4))"
+                let ok = inventory.addItem(
+                    name: genericName,
+                    quantity: 1,
+                    location: selectedLocation,
+                    expiryDate: Date().addingTimeInterval(Double(defaultDaysExpiry) * 86400),
+                    barcode: code,
+                    brand: "Inconnu",
+                    category: .other,
+                    imageURL: nil,
+                    capturedPhotoBase64: base64Photo,
+                    license: license
+                )
                 DispatchQueue.main.async {
-                    scanLogs.insert("❌ Non trouvé : \(code)", at: 0)
+                    if ok {
+                        scanLogs.insert("📸 Ajouté (Inconnu) : \(genericName)", at: 0)
+                    } else {
+                        scanLogs.insert("⚠️ Limite licence atteinte pour \(genericName)", at: 0)
+                    }
                     isFetching = false
                 }
             }
@@ -2019,7 +2045,7 @@ struct LiveBarcodeCameraSheet: View {
 
 // Scanner natif AVFoundation
 struct RealCameraBarcodeScannerView: UIViewControllerRepresentable {
-    var onBarcodeDetected: (String) -> Void
+    var onBarcodeDetected: (String, Data?) -> Void
     
     func makeUIViewController(context: Context) -> BarcodeScannerViewController {
         let controller = BarcodeScannerViewController()
@@ -2034,27 +2060,30 @@ struct RealCameraBarcodeScannerView: UIViewControllerRepresentable {
     }
     
     class Coordinator: NSObject, BarcodeScannerDelegate {
-        var onBarcodeDetected: (String) -> Void
+        var onBarcodeDetected: (String, Data?) -> Void
         
-        init(onBarcodeDetected: @escaping (String) -> Void) {
+        init(onBarcodeDetected: @escaping (String, Data?) -> Void) {
             self.onBarcodeDetected = onBarcodeDetected
         }
         
-        func didFindBarcode(_ code: String) {
-            onBarcodeDetected(code)
+        func didFindBarcode(_ code: String, capturedPhoto: Data?) {
+            onBarcodeDetected(code, capturedPhoto)
         }
     }
 }
 
 protocol BarcodeScannerDelegate: AnyObject {
-    func didFindBarcode(_ code: String)
+    func didFindBarcode(_ code: String, capturedPhoto: Data?)
 }
 
-class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate, AVCapturePhotoCaptureDelegate {
     weak var delegate: BarcodeScannerDelegate?
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var statusLabel: UILabel?
+    private var photoOutput = AVCapturePhotoOutput()
+    private var activeBarcode: String? = nil
+    private var isCapturing = false
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -2122,6 +2151,12 @@ class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObj
             return
         }
         
+        let photoOutput = AVCapturePhotoOutput()
+        if session.canAddOutput(photoOutput) {
+            session.addOutput(photoOutput)
+            self.photoOutput = photoOutput
+        }
+        
         let preview = AVCaptureVideoPreviewLayer(session: session)
         preview.frame = view.layer.bounds
         preview.videoGravity = .resizeAspectFill
@@ -2163,7 +2198,52 @@ class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObj
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
         if let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
            let stringValue = metadataObject.stringValue {
-            delegate?.didFindBarcode(stringValue)
+            guard !isCapturing else { return }
+            
+            if captureSession?.outputs.contains(photoOutput) == true {
+                isCapturing = true
+                activeBarcode = stringValue
+                let settings = AVCapturePhotoSettings()
+                photoOutput.capturePhoto(with: settings, delegate: self)
+            } else {
+                delegate?.didFindBarcode(stringValue, capturedPhoto: nil)
+            }
+        }
+    }
+    
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        defer {
+            isCapturing = false
+            activeBarcode = nil
+        }
+        
+        let barcode = activeBarcode ?? ""
+        guard !barcode.isEmpty else { return }
+        
+        var photoData: Data? = nil
+        if error == nil, let data = photo.fileDataRepresentation() {
+            if let image = UIImage(data: data) {
+                let maxDimension: CGFloat = 300
+                let size: CGSize
+                if image.size.width > image.size.height {
+                    size = CGSize(width: maxDimension, height: maxDimension * (image.size.height / image.size.width))
+                } else {
+                    size = CGSize(width: maxDimension * (image.size.width / image.size.height), height: maxDimension)
+                }
+                
+                UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+                image.draw(in: CGRect(origin: .zero, size: size))
+                let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
+                UIGraphicsEndImageContext()
+                
+                if let resized = resizedImage {
+                    photoData = resized.jpegData(compressionQuality: 0.5)
+                }
+            }
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.didFindBarcode(barcode, capturedPhoto: photoData)
         }
     }
     
@@ -2251,6 +2331,56 @@ struct ObjectFinderView: View {
                         }
                     }
                     .padding(.horizontal)
+                    
+                    if let item = selectedItem {
+                        HStack(spacing: 12) {
+                            if let photoBase64 = item.capturedPhotoBase64,
+                               let data = Data(base64Encoded: photoBase64),
+                               let uiImage = UIImage(data: data) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 55, height: 55)
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.cyan, lineWidth: 1.5)
+                                    )
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Visuel de référence détecté 📸")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundColor(.cyan)
+                                    Text("Servez-vous de cette photo de l'emballage pour orienter la recherche.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            } else {
+                                Image(systemName: "photo")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 55, height: 55)
+                                    .background(Color.secondary.opacity(0.08))
+                                    .cornerRadius(8)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Pas de photo de référence")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundColor(.secondary)
+                                    Text("Aucune photo n'a été prise pour cet article lors du scan.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(Color.secondary.opacity(0.05))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
+                    }
                     
                     // Vue Caméra Réelle avec Vision
                     ZStack {
@@ -2406,6 +2536,9 @@ struct ObjectFinderView: View {
         words.append(contentsOf: nameParts)
         if let brand = item.brand?.lowercased(), brand.count >= 3 {
             words.append(brand)
+        }
+        if let barcode = item.barcode, barcode.count >= 4 {
+            words.append(String(barcode.suffix(4)))
         }
         return words
     }
