@@ -42,23 +42,23 @@ struct CongeoApp: App {
 
 // MARK: - Configuration Firebase Congélo
 
-public enum FirebaseConfig {
-    public static let projectID = "congelapp-70613"
-    public static let apiKey = "AIzaSyC2zMPmeAP4W2reM6sGrNRVgdtUgmSLZiM"
-    public static let storageBucket = "congelapp-70613.firebasestorage.app"
-    public static let bundleID = "com.christophewhite.congelo"
-    public static let firestoreBaseURL = "https://firestore.googleapis.com/v1/projects/\(projectID)/databases/(default)/documents"
+enum FirebaseConfig {
+    static let projectID = "congelapp-70613"
+    static let apiKey = "AIzaSyC2zMPmeAP4W2reM6sGrNRVgdtUgmSLZiM"
+    static let storageBucket = "congelapp-70613.firebasestorage.app"
+    static let bundleID = "com.christophewhite.congelo"
+    static let firestoreBaseURL = "https://firestore.googleapis.com/v1/projects/\(projectID)/databases/(default)/documents"
 }
 
 // MARK: - Service Firestore Hybride (SDK Natif & REST Asynchrone)
 
 @MainActor
-public final class FirebaseService: ObservableObject {
-    public static let shared = FirebaseService()
+final class FirebaseService: ObservableObject {
+    static let shared = FirebaseService()
     
-    @Published public var isConnectedToFirebase: Bool = true
-    @Published public var lastSyncTimestamp: Date? = nil
-    @Published public var syncErrorMessage: String? = nil
+    @Published var isConnectedToFirebase: Bool = true
+    @Published var lastSyncTimestamp: Date? = nil
+    @Published var syncErrorMessage: String? = nil
     
     private let session: URLSession
     
@@ -71,7 +71,7 @@ public final class FirebaseService: ObservableObject {
     
     // MARK: - Épicerie Familiale (Grocery List)
     
-    public func fetchGroceryItems() async throws -> [GroceryItem] {
+    func fetchGroceryItems() async throws -> [GroceryItem] {
         #if canImport(FirebaseFirestore)
         #if canImport(FirebaseCore)
         if FirebaseApp.app() != nil {
@@ -129,7 +129,7 @@ public final class FirebaseService: ObservableObject {
         }
     }
     
-    public func saveGroceryItems(_ items: [GroceryItem]) async throws {
+    func saveGroceryItems(_ items: [GroceryItem]) async throws {
         #if canImport(FirebaseFirestore)
         #if canImport(FirebaseCore)
         if FirebaseApp.app() != nil {
@@ -189,7 +189,7 @@ public final class FirebaseService: ObservableObject {
     
     // MARK: - Membres du Cercle Familial (Family Members)
     
-    public func fetchFamilyMembers() async throws -> [String] {
+    func fetchFamilyMembers() async throws -> [String] {
         let documentURL = URL(string: "\(FirebaseConfig.firestoreBaseURL)/family_data/members?key=\(FirebaseConfig.apiKey)")!
         var request = URLRequest(url: documentURL)
         request.httpMethod = "GET"
@@ -215,7 +215,7 @@ public final class FirebaseService: ObservableObject {
         }
     }
     
-    public func saveFamilyMembers(_ members: [String]) async throws {
+    func saveFamilyMembers(_ members: [String]) async throws {
         guard let jsonData = try? JSONEncoder().encode(members),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             return
@@ -247,7 +247,7 @@ public final class FirebaseService: ObservableObject {
     
     // MARK: - Inventaire Congélateur Partagé (Inventory Items & Locations)
     
-    public func fetchInventoryData() async throws -> (items: [FoodItem], locations: [String])? {
+    func fetchInventoryData() async throws -> (items: [FoodItem], locations: [String])? {
         let documentURL = URL(string: "\(FirebaseConfig.firestoreBaseURL)/family_data/inventory?key=\(FirebaseConfig.apiKey)")!
         var request = URLRequest(url: documentURL)
         request.httpMethod = "GET"
@@ -282,7 +282,7 @@ public final class FirebaseService: ObservableObject {
         }
     }
     
-    public func saveInventoryData(items: [FoodItem], locations: [String]) async throws {
+    func saveInventoryData(items: [FoodItem], locations: [String]) async throws {
         guard let itemsData = try? JSONEncoder().encode(items),
               let itemsString = String(data: itemsData, encoding: .utf8),
               let locData = try? JSONEncoder().encode(locations),
