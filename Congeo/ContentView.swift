@@ -398,21 +398,30 @@ class InventoryManager: ObservableObject {
     private let itemsKey = "congelo_inventory_items_v2"
     private let locationsKey = "congelo_inventory_locations_v2"
     
+    private var isApplyingExternalUpdate = false
+    
     @Published var items: [FoodItem] = [] {
         didSet {
             saveItems()
+            if !isApplyingExternalUpdate {
+                saveToFirebase()
+            }
         }
     }
     
     @Published var locations: [String] = ["Maison", "Chalet"] {
         didSet {
             saveLocations()
+            if !isApplyingExternalUpdate {
+                saveToFirebase()
+            }
         }
     }
     
     init() {
         loadLocations()
         loadItems()
+        fetchFromFirebase()
     }
     
     private func saveItems() {
@@ -444,6 +453,33 @@ class InventoryManager: ObservableObject {
             self.locations = saved
         } else {
             self.locations = ["Maison", "Chalet"]
+        }
+    }
+    
+    private func saveToFirebase() {
+        let currentItems = items
+        let currentLocations = locations
+        Task {
+            do {
+                try await FirebaseService.shared.saveInventoryData(items: currentItems, locations: currentLocations)
+            } catch {
+                print("Firebase save inventory error: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func fetchFromFirebase() {
+        Task {
+            do {
+                if let data = try await FirebaseService.shared.fetchInventoryData() {
+                    self.isApplyingExternalUpdate = true
+                    self.items = data.items
+                    self.locations = data.locations
+                    self.isApplyingExternalUpdate = false
+                }
+            } catch {
+                print("Firebase load inventory error: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -660,7 +696,7 @@ actor OpenFoodFactsService {
     }
 }
 
-// MARK: - iCloud & Partage Familial Réel
+// MARK: - Firebase & Partage Familial Réel
 
 @MainActor
 final class FamilySharingManager: ObservableObject {
@@ -669,31 +705,28 @@ final class FamilySharingManager: ObservableObject {
     private let key = "congelo_family_members"
     
     init() {
-        loadMembers()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(ubiquitousStoreDidChange),
-            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-            object: NSUbiquitousKeyValueStore.default
-        )
+        loadLocalMembers()
+        fetchFromFirebase()
     }
     
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-    
-    @objc private func ubiquitousStoreDidChange(notification: Notification) {
-        DispatchQueue.main.async { [weak self] in
-            self?.loadMembers()
+    private func loadLocalMembers() {
+        if let localMembers = UserDefaults.standard.stringArray(forKey: key) {
+            self.members = localMembers
         }
     }
     
-    private func loadMembers() {
-        if let cloudMembers = NSUbiquitousKeyValueStore.default.array(forKey: key) as? [String] {
-            self.members = cloudMembers
-            self.lastSyncDate = Date()
-        } else if let localMembers = UserDefaults.standard.stringArray(forKey: key) {
-            self.members = localMembers
+    func fetchFromFirebase() {
+        Task {
+            do {
+                let fetchedMembers = try await FirebaseService.shared.fetchFamilyMembers()
+                if !fetchedMembers.isEmpty {
+                    self.members = fetchedMembers
+                    self.lastSyncDate = Date()
+                    UserDefaults.standard.set(fetchedMembers, forKey: key)
+                }
+            } catch {
+                print("Firebase load family members error: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -711,14 +744,21 @@ final class FamilySharingManager: ObservableObject {
     }
     
     private func save() {
-        NSUbiquitousKeyValueStore.default.set(members, forKey: key)
-        NSUbiquitousKeyValueStore.default.synchronize()
         UserDefaults.standard.set(members, forKey: key)
         lastSyncDate = Date()
+        
+        let currentMembers = members
+        Task {
+            do {
+                try await FirebaseService.shared.saveFamilyMembers(currentMembers)
+            } catch {
+                print("Firebase save family members error: \(error.localizedDescription)")
+            }
+        }
     }
 }
 
-// MARK: - Modèle d'Épicerie Partagée & Gestionnaire iCloud Réel
+// MARK: - Modèle d'Épicerie Partagée & Gestionnaire Firebase Réel
 
 struct GroceryItem: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
@@ -750,7 +790,7 @@ final class GroceryListManager: ObservableObject {
     
     @Published var lastSyncDate: Date? = Date()
     @Published var isSyncing: Bool = false
-    @Published var syncStatusMessage: String = "Synchronisé avec iCloud (Famille)"
+    @Published var syncStatusMessage: String = "Synchronisé avec Firebase (Famille)"
     @Published var authorName: String = "" {
         didSet {
             UserDefaults.standard.set(authorName, forKey: authorKey)
@@ -778,13 +818,6 @@ final class GroceryListManager: ObservableObject {
         
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(ubiquitousStoreDidChangeExternally),
-            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-            object: NSUbiquitousKeyValueStore.default
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
             selector: #selector(handleAppForeground),
             name: UIApplication.willEnterForegroundNotification,
             object: nil
@@ -795,12 +828,6 @@ final class GroceryListManager: ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
     
-    @objc private func ubiquitousStoreDidChangeExternally(notification: Notification) {
-        Task { @MainActor in
-            self.mergeFromCloud()
-        }
-    }
-    
     @objc private func handleAppForeground() {
         Task { @MainActor in
             self.forceSync()
@@ -808,98 +835,107 @@ final class GroceryListManager: ObservableObject {
     }
     
     private func loadInitialData() {
-        // 1. Essayer depuis NSUbiquitousKeyValueStore (iCloud)
-        if let cloudData = NSUbiquitousKeyValueStore.default.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([GroceryItem].self, from: cloudData) {
-            self.items = decoded
-            self.lastSyncDate = Date()
-            self.syncStatusMessage = "Synchronisé via iCloud (Famille)"
-            return
-        }
-        
-        // 2. Essayer depuis le cache local (UserDefaults)
+        // 1. Essayer depuis le cache local (UserDefaults) d'abord
         if let localData = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([GroceryItem].self, from: localData) {
             self.items = decoded
             self.lastSyncDate = Date()
             self.syncStatusMessage = "Chargé depuis le cache local"
-            return
+        } else {
+            // Exemple initial accueillant pour la famille
+            let defaultAuthor = authorName.isEmpty ? "Famille" : authorName
+            self.items = [
+                GroceryItem(name: "Lait d'avoine ou demi-écrémé", quantity: 2, unit: "brique(s)", category: .dairy, addedBy: defaultAuthor, notes: "Pour le petit-déjeuner"),
+                GroceryItem(name: "Beurre doux", quantity: 1, unit: "plaquette", category: .dairy, addedBy: defaultAuthor),
+                GroceryItem(name: "Courgettes fraîches", quantity: 3, unit: "unités", category: .vegetables, addedBy: defaultAuthor, notes: "Pour accompagner les viandes"),
+                GroceryItem(name: "Filets de poulet", quantity: 4, unit: "pièces", category: .meat, isCompleted: true, addedBy: defaultAuthor, notes: "Acheté au supermarché")
+            ]
         }
         
-        // 3. Exemple initial accueillant pour la famille
-        let defaultAuthor = authorName.isEmpty ? "Famille" : authorName
-        self.items = [
-            GroceryItem(name: "Lait d'avoine ou demi-écrémé", quantity: 2, unit: "brique(s)", category: .dairy, addedBy: defaultAuthor, notes: "Pour le petit-déjeuner"),
-            GroceryItem(name: "Beurre doux", quantity: 1, unit: "plaquette", category: .dairy, addedBy: defaultAuthor),
-            GroceryItem(name: "Courgettes fraîches", quantity: 3, unit: "unités", category: .vegetables, addedBy: defaultAuthor, notes: "Pour accompagner les viandes"),
-            GroceryItem(name: "Filets de poulet", quantity: 4, unit: "pièces", category: .meat, isCompleted: true, addedBy: defaultAuthor, notes: "Acheté au supermarché")
-        ]
-        saveToCloudAndLocal()
+        // 2. Synchronisation Firebase asynchrone
+        Task {
+            do {
+                let firebaseItems = try await FirebaseService.shared.fetchGroceryItems()
+                if !firebaseItems.isEmpty {
+                    self.isApplyingExternalUpdate = true
+                    self.items = firebaseItems
+                    self.isApplyingExternalUpdate = false
+                    self.lastSyncDate = Date()
+                    self.syncStatusMessage = "Synchronisé avec Firebase (Famille)"
+                    if let encoded = try? JSONEncoder().encode(firebaseItems) {
+                        UserDefaults.standard.set(encoded, forKey: storageKey)
+                    }
+                }
+            } catch {
+                self.syncStatusMessage = "Mode hors-ligne"
+            }
+        }
     }
     
     private func saveToCloudAndLocal() {
         guard let encoded = try? JSONEncoder().encode(items) else { return }
-        
-        // Synchronisation iCloud temps réel
-        NSUbiquitousKeyValueStore.default.set(encoded, forKey: storageKey)
-        NSUbiquitousKeyValueStore.default.synchronize()
-        
-        // Cache local immédiat
         UserDefaults.standard.set(encoded, forKey: storageKey)
         self.lastSyncDate = Date()
-        self.syncStatusMessage = "Synchronisé avec iCloud à \(Date().formatted(date: .omitted, time: .shortened))"
-    }
-    
-    func mergeFromCloud() {
-        guard let cloudData = NSUbiquitousKeyValueStore.default.data(forKey: storageKey),
-              let cloudItems = try? JSONDecoder().decode([GroceryItem].self, from: cloudData) else {
-            return
-        }
+        self.syncStatusMessage = "Enregistré localement à \(Date().formatted(date: .omitted, time: .shortened))"
         
-        // Fusion intelligente par ID et date de modification
-        var mergedDict: [UUID: GroceryItem] = [:]
-        for item in self.items {
-            mergedDict[item.id] = item
-        }
-        
-        for cloudItem in cloudItems {
-            if let existing = mergedDict[cloudItem.id] {
-                // Garder la version la plus récente
-                if cloudItem.lastModified >= existing.lastModified {
-                    mergedDict[cloudItem.id] = cloudItem
-                }
-            } else {
-                mergedDict[cloudItem.id] = cloudItem
+        let currentItems = items
+        Task {
+            do {
+                try await FirebaseService.shared.saveGroceryItems(currentItems)
+                self.syncStatusMessage = "Synchronisé avec Firebase à \(Date().formatted(date: .omitted, time: .shortened))"
+            } catch {
+                self.syncStatusMessage = "Sauvegardé localement (hors-ligne)"
             }
         }
-        
-        let sorted = Array(mergedDict.values).sorted {
-            if $0.isCompleted != $1.isCompleted {
-                return !$0.isCompleted && $1.isCompleted
-            }
-            return $0.addedDate > $1.addedDate
-        }
-        
-        self.isApplyingExternalUpdate = true
-        self.items = sorted
-        self.isApplyingExternalUpdate = false
-        
-        if let encoded = try? JSONEncoder().encode(sorted) {
-            UserDefaults.standard.set(encoded, forKey: storageKey)
-        }
-        
-        self.lastSyncDate = Date()
-        self.syncStatusMessage = "Mise à jour reçue d'un membre de la famille"
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
     
     func forceSync() {
         isSyncing = true
-        NSUbiquitousKeyValueStore.default.synchronize()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            self.mergeFromCloud()
-            self.isSyncing = false
-            self.syncStatusMessage = "Synchronisation iCloud vérifiée"
+        self.syncStatusMessage = "Vérification de la synchronisation Firebase..."
+        
+        Task {
+            do {
+                let firebaseItems = try await FirebaseService.shared.fetchGroceryItems()
+                self.isApplyingExternalUpdate = true
+                
+                // Fusion intelligente par ID et date de modification
+                var mergedDict: [UUID: GroceryItem] = [:]
+                for item in self.items {
+                    mergedDict[item.id] = item
+                }
+                
+                for fbItem in firebaseItems {
+                    if let existing = mergedDict[fbItem.id] {
+                        if fbItem.lastModified >= existing.lastModified {
+                            mergedDict[fbItem.id] = fbItem
+                        }
+                    } else {
+                        mergedDict[fbItem.id] = fbItem
+                    }
+                }
+                
+                let sorted = Array(mergedDict.values).sorted {
+                    if $0.isCompleted != $1.isCompleted {
+                        return !$0.isCompleted && $1.isCompleted
+                    }
+                    return $0.addedDate > $1.addedDate
+                }
+                
+                self.items = sorted
+                self.isApplyingExternalUpdate = false
+                
+                if let encoded = try? JSONEncoder().encode(sorted) {
+                    UserDefaults.standard.set(encoded, forKey: storageKey)
+                }
+                
+                self.lastSyncDate = Date()
+                self.syncStatusMessage = "Synchronisation Firebase réussie"
+                self.isSyncing = false
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                self.syncStatusMessage = "Échec de synchronisation : \(error.localizedDescription)"
+                self.isSyncing = false
+            }
         }
     }
     
@@ -1021,7 +1057,7 @@ final class GroceryListManager: ObservableObject {
             location: location,
             expiryDate: expiryDate,
             category: item.category,
-            notes: "Transféré depuis la liste d'épicerie partagée iCloud",
+            notes: "Transféré depuis la liste d'épicerie partagée Firebase",
             license: license
         )
         
@@ -2907,7 +2943,7 @@ struct HardwareView: View {
     }
 }
 
-// MARK: - 5.5. Liste d'Épicerie Familiale Partagée iCloud Réel
+// MARK: - 5.5. Liste d'Épicerie Familiale Partagée Firebase Réelle
 
 struct GroceryListView: View {
     @EnvironmentObject var grocery: GroceryListManager
@@ -3004,7 +3040,7 @@ struct GroceryListView: View {
                             Button {
                                 showAuthorSheet = true
                             } label: {
-                                Label("Mon nom d'auteur iCloud", systemImage: "person.text.rectangle")
+                                Label("Mon nom d'auteur Firebase", systemImage: "person.text.rectangle")
                             }
                             
                             if grocery.completedCount > 0 {
@@ -3063,13 +3099,13 @@ struct GroceryListView: View {
     
     private var syncBannerView: some View {
         HStack(spacing: 8) {
-            Image(systemName: "icloud.fill")
+            Image(systemName: "bolt.fill")
                 .foregroundColor(.cyan)
                 .font(.subheadline)
             
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    Text("iCloud Partage Familial")
+                    Text("Firebase Partage Familial")
                         .font(.caption2)
                         .bold()
                     Text("• En direct")
@@ -3581,7 +3617,7 @@ struct GroceryTransferToFreezerSheet: View {
     }
 }
 
-// MARK: - Feuille Nom d'Auteur iCloud
+// MARK: - Feuille Nom d'Auteur Firebase
 
 struct GroceryAuthorNameSheet: View {
     @Binding var isPresented: Bool
@@ -3596,7 +3632,7 @@ struct GroceryAuthorNameSheet: View {
                 Section(header: Text("Votre Nom dans la Famille")) {
                     TextField("Ex: Papa, Maman, Christophe...", text: $nameInput)
                     
-                    Text("Ce nom sera affiché à côté des articles que vous ajoutez sur la liste partagée iCloud.")
+                    Text("Ce nom sera affiché à côté des articles que vous ajoutez sur la liste partagée Firebase.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -3665,7 +3701,7 @@ struct FamilyGroceryPaywallView: View {
                         .bold()
                         .multilineTextAlignment(.center)
                     
-                    Text("Modifiable en direct par toute la famille via iCloud • Réservé à la Licence Famille")
+                    Text("Modifiable en direct par toute la famille via Firebase • Réservé à la Licence Famille")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -3676,9 +3712,9 @@ struct FamilyGroceryPaywallView: View {
                 // Simulation visuelle live sync
                 VStack(spacing: 10) {
                     HStack {
-                        Image(systemName: "icloud.fill")
+                        Image(systemName: "bolt.fill")
                             .foregroundColor(.cyan)
-                        Text("Synchronisation en Direct iCloud")
+                        Text("Synchronisation en Direct Firebase")
                             .font(.caption)
                             .bold()
                         Spacer()
@@ -3805,7 +3841,7 @@ struct FamilyGroceryPaywallView: View {
     }
 }
 
-// MARK: - 6. Partage Familial iCloud Réel
+// MARK: - 6. Partage Familial Firebase Réel
 
 struct FamilySharingView: View {
     @StateObject private var familySharing = FamilySharingManager()
@@ -3818,8 +3854,8 @@ struct FamilySharingView: View {
     
     var body: some View {
         Form {
-            Section(header: Text("Ajout de membre iCloud")) {
-                TextField("Email iCloud du membre", text: $newMemberEmail)
+            Section(header: Text("Ajout de membre de la famille")) {
+                TextField("Email du membre", text: $newMemberEmail)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.emailAddress)
@@ -3869,7 +3905,7 @@ struct FamilySharingView: View {
                 }
             }
         }
-        .navigationTitle("Partage Familial iCloud")
+        .navigationTitle("Partage Familial Firebase")
         .alert("Adresse email invalide ou déjà présente", isPresented: $showError) {
             Button("OK", role: .cancel) { }
         }
@@ -4000,7 +4036,7 @@ struct SettingsView: View {
                             Text("Famille (9,99 $)")
                                 .font(.subheadline)
                                 .bold()
-                            Text("Tout illimité • Recettes Anti-Gaspi • Partage iCloud")
+                            Text("Tout illimité • Recettes Anti-Gaspi • Partage Firebase")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
@@ -4058,10 +4094,10 @@ struct SettingsView: View {
                 
                 if license.currentTier.hasFamilySharing {
                     Section(header: Text("Options Famille")) {
-                        NavigationLink("Gérer le partage familial iCloud") {
+                        NavigationLink("Gérer le partage familial Firebase") {
                             FamilySharingView()
                         }
-                        NavigationLink("Liste d'épicerie partagée iCloud") {
+                        NavigationLink("Liste d'épicerie partagée Firebase") {
                             GroceryListView()
                         }
                     }
